@@ -1,0 +1,6 @@
+{
+  "name": "Cotton Clothing Retail Inventory & POS",
+  "description": "Inventory management and POS system for cotton sarees, salwar suits, and kurtis with barcode scanning, stock tracking, analytics, and Google Sheets sync.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
