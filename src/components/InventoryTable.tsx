@@ -26,6 +26,8 @@ interface InventoryTableProps {
   onUpdateStock: (productId: string, newStock: number, reason: string) => void;
   onOpenAddModal: () => void;
   onOpenScanner: () => void;
+  onOpenScannerWithMode?: (mode: 'deduct' | 'lookup' | 'add') => void;
+  onDeductStock?: (barcode: string) => Promise<any> | void;
   onDeleteProduct: (productId: string) => void;
   onOpenGenerateAndScan?: () => void;
 }
@@ -36,6 +38,8 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   onUpdateStock,
   onOpenAddModal,
   onOpenScanner,
+  onOpenScannerWithMode,
+  onDeductStock,
   onDeleteProduct,
   onOpenGenerateAndScan,
 }) => {
@@ -165,6 +169,15 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                 <span>Generate &amp; Scan Barcode</span>
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('deduct') : onOpenScanner()}
+              className="py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all"
+              title="Open camera to deduct 1 item per scan"
+            >
+              <BarcodeIcon className="w-3.5 h-3.5" />
+              <span>Scan to Deduct (-1)</span>
+            </button>
             <button
               type="button"
               onClick={onOpenAddModal}
@@ -376,13 +389,30 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                             <span className="font-bold text-sm text-slate-900">{p.stock}</span>
                             <button
                               type="button"
+                              onClick={() => onDeductStock ? onDeductStock(p.barcode) : onUpdateStock(p.id, Math.max(0, p.stock - 1), 'Quick Deduct')}
+                              disabled={p.stock <= 0}
+                              title="Deduct 1 piece"
+                              className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 disabled:opacity-40 text-amber-800 rounded border border-amber-200 transition-colors"
+                            >
+                              -1
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onUpdateStock(p.id, p.stock + 1, 'Quick Restock')}
+                              title="Add 1 piece"
+                              className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded border border-emerald-200 transition-colors"
+                            >
+                              +1
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => startStockEdit(p)}
-                              title="Quick stock level adjustment"
-                              className="text-slate-400 hover:text-emerald-700 opacity-60 group-hover:opacity-100 transition-opacity"
+                              title="Custom stock level adjustment"
+                              className="text-slate-400 hover:text-emerald-700 opacity-60 group-hover:opacity-100 transition-opacity ml-0.5"
                             >
                               <Edit2 className="w-3 h-3" />
                             </button>

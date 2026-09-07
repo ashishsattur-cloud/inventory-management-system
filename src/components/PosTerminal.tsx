@@ -22,6 +22,8 @@ interface PosTerminalProps {
   products: Product[];
   onCompleteSale: (sale: SaleTransaction) => void;
   onOpenScanner: () => void;
+  onOpenScannerWithMode?: (mode: 'deduct' | 'lookup' | 'add') => void;
+  onDeductStock?: (barcode: string) => Promise<any> | void;
   onOpenHardwareSettings: () => void;
   onOpenGenerateAndScan?: () => void;
   onOpenAddWithBarcode?: (barcode: string) => void;
@@ -31,12 +33,16 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   products,
   onCompleteSale,
   onOpenScanner,
+  onOpenScannerWithMode,
+  onDeductStock,
   onOpenHardwareSettings,
   onOpenGenerateAndScan,
   onOpenAddWithBarcode,
 }) => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [manualBarcode, setManualBarcode] = useState('');
+  const [barcodeAction, setBarcodeAction] = useState<'cart' | 'deduct'>('cart');
+  const [quickFeedback, setQuickFeedback] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI / QR' | 'Card'>('UPI / QR');
@@ -88,15 +94,28 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
     });
   };
 
-  const handleBarcodeSubmit = (e: React.FormEvent) => {
+  const handleBarcodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualBarcode.trim()) return;
     const code = manualBarcode.trim();
     const item = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
 
     if (item) {
-      addToCart(item);
-      setManualBarcode('');
+      if (barcodeAction === 'deduct') {
+        if (item.stock <= 0) {
+          alert(`"${item.name}" is already out of stock!`);
+          return;
+        }
+        if (onDeductStock) {
+          await onDeductStock(item.barcode);
+        }
+        setQuickFeedback(`⚡ Reduced 1 piece of "${item.name}"! New stock: ${item.stock - 1} pcs.`);
+        setTimeout(() => setQuickFeedback(null), 4000);
+        setManualBarcode('');
+      } else {
+        addToCart(item);
+        setManualBarcode('');
+      }
     } else {
       if (onOpenAddWithBarcode) {
         if (confirm(`Barcode "${code}" is not in the system yet. Would you like to scan and add this clothing item now?`)) {
@@ -297,44 +316,106 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
       {/* Left Column: Product Catalog & Fast Barcode Scan (7 cols) */}
       <div className="lg:col-span-7 space-y-4">
         {/* Top Hardware & Barcode Scanning Bar */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
-          <form onSubmit={handleBarcodeSubmit} className="flex-1 min-w-[240px] flex gap-2">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+          {quickFeedback && (
+            <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-xs font-bold text-amber-900 flex items-center justify-between animate-in fade-in">
+              <span>{quickFeedback}</span>
+              <button
+                type="button"
+                onClick={() => setQuickFeedback(null)}
+                className="text-amber-700 hover:text-amber-950 text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setBarcodeAction('cart')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  barcodeAction === 'cart'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                🛒 Add to Cart
+              </button>
+              <button
+                type="button"
+                onClick={() => setBarcodeAction('deduct')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                  barcodeAction === 'deduct'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>⚡ Deduct (-1 Stock)</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('deduct') : onOpenScanner()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs"
+                title="Open camera in Scan to Deduct -1 mode"
+              >
+                <Barcode className="w-4 h-4" />
+                <span>Scan to Deduct (-1)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onOpenScanner}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-all shadow-xs"
+              >
+                <Barcode className="w-4 h-4 text-emerald-400" />
+                <span>Camera Scan</span>
+              </button>
+              <button
+                type="button"
+                onClick={onOpenHardwareSettings}
+                className="p-1.5 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-medium transition-colors"
+                title="POS Wi-Fi & Hardware Integration"
+              >
+                <QrCode className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleBarcodeSubmit} className="flex gap-2">
             <div className="relative flex-1">
               <Barcode className="w-5 h-5 absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
                 value={manualBarcode}
                 onChange={(e) => setManualBarcode(e.target.value)}
-                placeholder="Scan or type barcode / SKU..."
-                className="w-full pl-10 pr-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder={
+                  barcodeAction === 'deduct'
+                    ? 'Scan/type barcode to instantly deduct 1 from stock...'
+                    : 'Scan or type barcode to add to checkout cart...'
+                }
+                className={`w-full pl-10 pr-3 py-2 text-sm border rounded-xl font-mono focus:bg-white focus:outline-none focus:ring-2 ${
+                  barcodeAction === 'deduct'
+                    ? 'bg-amber-50/50 border-amber-300 focus:ring-amber-500'
+                    : 'bg-slate-50 border-slate-300 focus:ring-emerald-500'
+                }`}
               />
             </div>
             <button
               type="submit"
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+              className={`px-4 py-2 text-white text-xs font-bold rounded-xl transition-all shadow-sm shrink-0 ${
+                barcodeAction === 'deduct'
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
             >
-              Add Item
+              {barcodeAction === 'deduct' ? 'Deduct 1' : 'Add Item'}
             </button>
           </form>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenScanner}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-all shadow-sm"
-            >
-              <Barcode className="w-4 h-4 text-emerald-400" />
-              <span>Camera Scan</span>
-            </button>
-            <button
-              type="button"
-              onClick={onOpenHardwareSettings}
-              className="p-2 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-medium transition-colors"
-              title="POS Wi-Fi & Hardware Integration"
-            >
-              <QrCode className="w-4 h-4" />
-            </button>
-          </div>
         </div>
 
         {/* Filter Pills */}

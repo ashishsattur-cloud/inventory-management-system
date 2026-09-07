@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Smartphone, Wifi, QrCode, Laptop, Check, RefreshCw, Radio, ShieldCheck, ArrowLeft, X } from 'lucide-react';
+import { Smartphone, Wifi, QrCode, Laptop, Check, RefreshCw, Radio, ShieldCheck, ArrowLeft, X, MinusCircle } from 'lucide-react';
 import { Product } from '../types';
 
 interface PosHardwareModalProps {
@@ -7,6 +7,8 @@ interface PosHardwareModalProps {
   onClose: () => void;
   products: Product[];
   onRemoteScan: (barcode: string, product?: Product) => void;
+  onDeductStock?: (barcode: string) => Promise<any> | void;
+  connectedDevices?: number;
 }
 
 export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
@@ -14,17 +16,35 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
   onClose,
   products,
   onRemoteScan,
+  onDeductStock,
+  connectedDevices = 1,
 }) => {
-  const [wifiSsid] = useState('Boutique_Store_5G');
-  const [ipAddress] = useState('192.168.1.145:3000');
-  const [lastReceived, setLastReceived] = useState<{ barcode: string; time: string } | null>(null);
+  const [wifiSsid] = useState('Boutique_Store_Wi-Fi');
+  const [lastReceived, setLastReceived] = useState<{ barcode: string; time: string; action: string } | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSimulateMobileScan = (barcode: string) => {
+  const currentUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  const mobileScannerUrl = `${currentUrl}?mode=scanner`;
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(mobileScannerUrl)}`;
+
+  const handleSimulateMobileScan = async (barcode: string, deduct = false) => {
     const product = products.find((p) => p.barcode === barcode);
-    setLastReceived({ barcode, time: new Date().toLocaleTimeString() });
-    onRemoteScan(barcode, product);
+    if (deduct && onDeductStock) {
+      await onDeductStock(barcode);
+      setLastReceived({
+        barcode,
+        time: new Date().toLocaleTimeString(),
+        action: `Deducted 1 item (${product?.name || barcode})`,
+      });
+    } else {
+      onRemoteScan(barcode, product);
+      setLastReceived({
+        barcode,
+        time: new Date().toLocaleTimeString(),
+        action: `Looked up ${product?.name || barcode}`,
+      });
+    }
   };
 
   return (
@@ -49,10 +69,10 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
               </div>
               <div className="truncate">
                 <h3 className="font-semibold text-sm sm:text-base text-slate-50 leading-tight">
-                  Wi-Fi Mobile Barcode Gun &amp; Hardware Manual
+                  Mobile Wi-Fi Scanner &amp; Hardware Sync
                 </h3>
                 <p className="text-[11px] text-slate-400 truncate">
-                  Connect mobile phones as wireless handheld scanners over store Wi-Fi
+                  Laptop and mobile devices stay in 100% sync in real time
                 </p>
               </div>
             </div>
@@ -68,12 +88,13 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
-          {/* Architecture Diagram Card */}
+          {/* Live Network Sync Status Card */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-3">
-              <span>Local Store Network Status</span>
-              <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Connected to {wifiSsid}
+              <span>Real-Time Network Sync Status</span>
+              <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Connected • {connectedDevices} Device{connectedDevices === 1 ? '' : 's'} Active
               </span>
             </div>
 
@@ -81,20 +102,19 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
               {/* POS Terminal */}
               <div className="bg-white p-3.5 rounded-xl border border-slate-200 text-center">
                 <Laptop className="w-6 h-6 text-slate-700 mx-auto mb-1.5" />
-                <div className="text-xs font-bold text-slate-800">Counter POS Terminal</div>
-                <div className="text-[11px] text-slate-500 font-mono mt-0.5">{ipAddress}</div>
-                <div className="mt-2 text-[10px] text-emerald-600 bg-emerald-50 py-0.5 rounded font-medium">
-                  Listening for Scans
+                <div className="text-xs font-bold text-slate-800">Counter Laptop / POS</div>
+                <div className="text-[10px] text-emerald-700 bg-emerald-50 py-0.5 rounded font-medium mt-2">
+                  SSE Live Stream Active
                 </div>
               </div>
 
               {/* Wi-Fi Bridge */}
               <div className="bg-white p-3.5 rounded-xl border border-slate-200 text-center flex flex-col justify-center items-center">
                 <Radio className="w-6 h-6 text-emerald-600 mb-1.5 animate-pulse" />
-                <div className="text-xs font-bold text-slate-800">Local Wi-Fi Bridge</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Zero-Lag WebSocket / UDP</div>
-                <div className="mt-2 text-[10px] text-slate-600 bg-slate-100 py-0.5 px-2 rounded">
-                  Port: 3000
+                <div className="text-xs font-bold text-slate-800">Local Wi-Fi Server</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Sub-second Sync</div>
+                <div className="mt-1 text-[10px] text-slate-600 bg-slate-100 py-0.5 px-2 rounded">
+                  Port 3000
                 </div>
               </div>
 
@@ -102,89 +122,113 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
               <div className="bg-white p-3.5 rounded-xl border border-slate-200 text-center">
                 <Smartphone className="w-6 h-6 text-emerald-700 mx-auto mb-1.5" />
                 <div className="text-xs font-bold text-slate-800">Mobile Barcode Gun</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Any Android / iPhone</div>
-                <div className="mt-2 text-[10px] text-emerald-700 bg-emerald-50 py-0.5 rounded font-medium">
-                  Sync Ready
+                <div className="text-[10px] text-emerald-700 bg-emerald-50 py-0.5 rounded font-medium mt-2">
+                  Scan to Deduct (-1)
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Connect Mobile Step */}
+          {/* Connect Mobile Step with QR Code */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="border border-slate-200 rounded-xl p-4 bg-white">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
+            <div className="border border-slate-200 rounded-xl p-4 bg-white flex flex-col items-center text-center">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5 w-full justify-center">
                 <QrCode className="w-4 h-4 text-emerald-600" />
-                Step 1: Open on Store Floor Mobile
+                Step 1: Scan QR Code with Phone
               </h4>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Connect your staff smartphone to the same store Wi-Fi network (<strong>{wifiSsid}</strong>).
-                Open the app URL or scan the camera interface directly from the device:
+              <p className="text-xs text-slate-600 mb-3">
+                Open phone camera and point at this QR code to launch the Mobile Floor Scanner:
               </p>
-              <div className="mt-3 bg-slate-900 text-slate-200 font-mono text-[11px] p-2.5 rounded-lg break-all">
-                {window.location.origin}
+
+              {/* QR Code image */}
+              <div className="p-2.5 bg-white border border-slate-300 rounded-xl shadow-xs">
+                <img
+                  src={qrCodeUrl}
+                  alt="Scan to open on phone"
+                  className="w-36 h-36 mx-auto rounded-lg"
+                  referrerPolicy="no-referrer"
+                />
               </div>
-              <p className="text-[11px] text-slate-500 mt-2">
-                The mobile screen switches automatically to high-speed barcode scanning mode with audio feedback.
+
+              <div className="mt-2 text-[11px] font-mono text-slate-700 break-all bg-slate-100 px-2 py-1 rounded w-full">
+                {currentUrl}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1.5">
+                Ensure both laptop and phone are connected to the store Wi-Fi or internet.
               </p>
             </div>
 
-            {/* Test Wi-Fi Barcode Reception */}
-            <div className="border border-slate-200 rounded-xl p-4 bg-white">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
-                <Smartphone className="w-4 h-4 text-emerald-600" />
-                Step 2: Test Mobile Wi-Fi Scan Trigger
-              </h4>
-              <p className="text-xs text-slate-500 mb-3">
-                Simulate a barcode transmitted wirelessly from staff walking across saree &amp; kurti racks:
-              </p>
-
-              <div className="space-y-2">
-                {products.length === 0 ? (
-                  <div className="p-3 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-500">
-                    No products added to catalog yet. Once you scan/add items, you can test remote beam triggers here.
+            {/* Test Wi-Fi Barcode Reception & Deduct */}
+            <div className="border border-slate-200 rounded-xl p-4 bg-white flex flex-col justify-between">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
+                  <Smartphone className="w-4 h-4 text-emerald-600" />
+                  Step 2: How "Scan to Deduct" Works
+                </h4>
+                <div className="text-xs text-slate-600 space-y-2 mb-3">
+                  <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-950">
+                    <strong className="block mb-0.5">🔻 Scan to Deduct Mode:</strong>
+                    When staff scans a saree or salwar suit tag on their mobile phone, the server immediately deducts 1 from stock and updates this counter laptop screen in real time!
                   </div>
-                ) : (
-                  products.slice(0, 3).map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleSimulateMobileScan(p.barcode)}
-                      className="w-full text-left p-2 rounded-lg bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 transition-colors flex items-center justify-between text-xs"
-                    >
-                      <div>
-                        <div className="font-semibold text-slate-800">{p.name}</div>
-                        <div className="text-[11px] text-slate-500 font-mono">{p.barcode} • {p.category}</div>
+                  <p className="text-[11px] text-slate-500">
+                    Test the wireless sync trigger right now:
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  {products.length === 0 ? (
+                    <div className="p-3 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-500">
+                      No garments added yet. Use "Generate &amp; Scan Barcode" on the inventory page to add garments first.
+                    </div>
+                  ) : (
+                    products.slice(0, 3).map((p) => (
+                      <div
+                        key={p.id}
+                        className="p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between text-xs"
+                      >
+                        <div>
+                          <div className="font-semibold text-slate-800">{p.name}</div>
+                          <div className="text-[11px] text-slate-500 font-mono">
+                            {p.barcode} • Stock: <span className="font-bold text-slate-900">{p.stock}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleSimulateMobileScan(p.barcode, true)}
+                            className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[11px] font-bold transition-colors flex items-center gap-1 shadow-2xs"
+                          >
+                            <MinusCircle className="w-3 h-3" />
+                            <span>Deduct 1</span>
+                          </button>
+                        </div>
                       </div>
-                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">
-                        Beam Scan →
-                      </span>
-                    </button>
-                  ))
-                )}
+                    ))
+                  )}
+                </div>
               </div>
 
               {lastReceived && (
                 <div className="mt-3 p-2.5 bg-emerald-50 rounded-lg border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between">
-                  <span>Received Barcode: <strong>{lastReceived.barcode}</strong></span>
-                  <span className="text-[10px] text-emerald-700">{lastReceived.time}</span>
+                  <span>{lastReceived.action}</span>
+                  <span className="text-[10px] text-emerald-700 font-mono">{lastReceived.time}</span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Local Hardware Integration Details - No bottom back button, instructions at top */}
+          {/* Local Hardware Integration Details */}
           <div className="border-t border-slate-100 pt-4 flex flex-wrap items-center justify-between text-xs text-slate-600">
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" /> USB &amp; Bluetooth Laser Scanners supported
+                <ShieldCheck className="w-4 h-4 text-emerald-600" /> USB &amp; Bluetooth 1D/2D Laser Guns supported
               </span>
               <span className="flex items-center gap-1">
                 <Check className="w-4 h-4 text-emerald-600" /> ESC/POS Thermal Receipt ready
               </span>
             </div>
             <div className="text-[11px] text-slate-400">
-              Hardware setup active • Click "Back to Store" at top to return
+              Hardware sync active • Click "Back to Store" at top to return
             </div>
           </div>
         </div>
@@ -192,4 +236,3 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
     </div>
   );
 };
-
