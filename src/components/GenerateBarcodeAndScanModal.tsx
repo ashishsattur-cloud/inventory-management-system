@@ -356,6 +356,9 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
     if (!name.trim()) return;
 
     const finalBarcode = verifiedBarcode || generatedBarcode;
+    const finalStock = Number(stock);
+    const safeStock = isNaN(finalStock) || finalStock < 0 ? 10 : finalStock;
+
     const finalProduct: Product = {
       id: 'prod-' + Date.now(),
       sku: sku || computeSku(category, fabricType, barcodeMeta.itemId),
@@ -367,8 +370,8 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
       size,
       color,
       costPrice: Number(costPrice) || 0,
-      sellingPrice: Number(sellingPrice) || 0,
-      stock: Number(stock) || 0,
+      sellingPrice: Number(sellingPrice) || 1200,
+      stock: safeStock,
       minStockAlert: Number(minStockAlert) || 4,
       supplierId: supplierName,
       rackLocation: rackLocation || 'Main Display Rack',
@@ -386,31 +389,41 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 my-6">
         {/* Top Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {step === 'enter_details' && (
+        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            {step === 'enter_details' ? (
               <button
                 type="button"
                 onClick={() => setStep('generate_and_scan')}
-                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-1 text-xs"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
                 title="Back to barcode scan"
               >
-                <ArrowLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">Back</span>
+                <ArrowLeft className="w-4 h-4 text-emerald-400" />
+                <span>← Back</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
+                title="Back to counter"
+              >
+                <ArrowLeft className="w-4 h-4 text-emerald-400" />
+                <span>← Back</span>
               </button>
             )}
-            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
+            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 hidden sm:block">
               <BarcodeIcon className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-base text-slate-50">
+              <h3 className="font-semibold text-sm sm:text-base text-slate-50">
                 {step === 'generate_and_scan'
-                  ? 'Step 1: Generate & Scan Unique Barcode'
-                  : 'Step 2: Enter Clothing Item Details'}
+                  ? 'Generate Barcode Tag'
+                  : 'Enter Clothing Item Details'}
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-[11px] text-slate-400 hidden sm:block">
                 {step === 'generate_and_scan'
-                  ? 'Generates a unique barcode with category number & unique item ID, then scanned to add'
+                  ? 'Print tag or scan with camera to add directly to store'
                   : `Scanned Barcode: ${verifiedBarcode || generatedBarcode}`}
               </p>
             </div>
@@ -419,6 +432,7 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-white p-1.5 rounded-lg transition-colors"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -587,6 +601,16 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
                 Scan Code
               </button>
             </form>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors"
+              >
+                ← Cancel &amp; Back to Shop Counter
+              </button>
+            </div>
           </div>
         )}
 

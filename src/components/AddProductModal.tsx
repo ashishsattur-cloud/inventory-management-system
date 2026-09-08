@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Product, Supplier, ClothingCategory } from '../types';
-import { X, Sparkles, Plus, Tag, Check, RefreshCw, Barcode as BarcodeIcon } from 'lucide-react';
+import { X, Sparkles, Plus, Tag, Check, RefreshCw, Barcode as BarcodeIcon, ArrowLeft } from 'lucide-react';
 import {
   generateStructuredBarcode,
   CATEGORY_MAP,
@@ -42,6 +42,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [sku, setSku] = useState('');
   const [catCode, setCatCode] = useState('10');
   const [itemId, setItemId] = useState('00001');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const regenerateBarcode = (cat: ClothingCategory) => {
     const res = generateStructuredBarcode(cat, existingProducts);
@@ -53,6 +54,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setFormError(null);
+      if (!initialBarcode) {
+        setName('');
+        setStock(10);
+      }
       if (initialBarcode) {
         setBarcode(initialBarcode);
         const detected = detectCategoryFromBarcode(initialBarcode);
@@ -92,12 +98,18 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setFormError('Please enter a clothing item title (e.g. Pure Cotton Kurti)');
+      return;
+    }
+
+    const finalStock = Number(stock);
+    const safeStock = isNaN(finalStock) || finalStock < 0 ? 10 : finalStock;
 
     const newProduct: Product = {
       id: 'prod-' + Date.now(),
       sku: sku || `${CATEGORY_MAP[category]?.prefix || 'CLT'}-${catCode}-${itemId}`,
-      barcode: barcode.trim(),
+      barcode: barcode.trim() || `${catCode}${itemId}`,
       name: name.trim(),
       category,
       fabricType,
@@ -105,9 +117,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       size,
       color,
       costPrice: Number(costPrice) || 0,
-      sellingPrice: Number(sellingPrice) || 0,
-      stock: Number(stock) || 0,
-      minStockAlert: Number(minStockAlert) || 5,
+      sellingPrice: Number(sellingPrice) || 1200,
+      stock: safeStock,
+      minStockAlert: Number(minStockAlert) || 4,
       supplierId,
       rackLocation: rackLocation || 'Store Floor',
       createdAt: new Date().toISOString().split('T')[0],
@@ -121,20 +133,30 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 my-8">
-        {/* Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+        {/* Header with back button */}
+        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
+              title="Back to counter"
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-400" />
+              <span>← Back</span>
+            </button>
+            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 hidden sm:block">
               <Tag className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-base text-slate-50">Add Clothing Item to Inventory</h3>
-              <p className="text-xs text-slate-400">Generates unique barcode tag with category code &amp; item ID</p>
+              <h3 className="font-semibold text-sm sm:text-base text-slate-50">Add Clothing Item</h3>
+              <p className="text-[11px] text-slate-400 hidden sm:block">Generates unique barcode tag with category code &amp; item ID</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -142,6 +164,19 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {formError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-700 flex items-center justify-between animate-in fade-in">
+              <span>⚠️ {formError}</span>
+              <button
+                type="button"
+                onClick={() => setFormError(null)}
+                className="text-red-500 hover:text-red-800 text-xs px-1.5 py-0.5"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* Category Selector */}
           <div>
             <div className="flex items-center justify-between mb-1.5">

@@ -10,7 +10,8 @@ import {
   UploadCloud,
   Layers,
   Lock,
-  Sparkles
+  Sparkles,
+  ArrowLeft
 } from 'lucide-react';
 import {
   createInventorySpreadsheet,
@@ -97,20 +98,30 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-6 border border-slate-200">
-        {/* Header */}
+        {/* Header with back button */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all"
+              title="Back"
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-600" />
+              <span>← Back</span>
+            </button>
+            <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700 hidden sm:block">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-slate-900">Google Sheets Live Synchronization</h3>
-              <p className="text-xs text-slate-400">Automated inventory reporting, real-time stock and sales backup</p>
+              <h3 className="font-bold text-base text-slate-900">Google Sheets Sync</h3>
+              <p className="text-xs text-slate-400">Automated inventory reporting &amp; sales backup</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-slate-700 p-1"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>

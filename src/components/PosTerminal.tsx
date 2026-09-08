@@ -14,7 +14,11 @@ import {
   Receipt,
   User,
   Phone,
-  Sparkles
+  Sparkles,
+  PlusCircle,
+  MinusCircle,
+  ArrowLeft,
+  Tag
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -22,11 +26,18 @@ interface PosTerminalProps {
   products: Product[];
   onCompleteSale: (sale: SaleTransaction) => void;
   onOpenScanner: () => void;
-  onOpenScannerWithMode?: (mode: 'deduct' | 'lookup' | 'add') => void;
+  onOpenScannerWithMode?: (mode: 'deduct' | 'lookup' | 'add' | 'cart') => void;
   onDeductStock?: (barcode: string) => Promise<any> | void;
   onOpenHardwareSettings: () => void;
   onOpenGenerateAndScan?: () => void;
+  onOpenAddModal?: () => void;
   onOpenAddWithBarcode?: (barcode: string) => void;
+  cart?: CartItem[];
+  onAddToCart?: (product: Product) => void;
+  onUpdateQuantity?: (productId: string, delta: number) => void;
+  onUpdateDiscount?: (productId: string, discount: number) => void;
+  onRemoveFromCart?: (productId: string) => void;
+  onClearCart?: () => void;
 }
 
 export const PosTerminal: React.FC<PosTerminalProps> = ({
@@ -37,11 +48,22 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   onDeductStock,
   onOpenHardwareSettings,
   onOpenGenerateAndScan,
+  onOpenAddModal,
   onOpenAddWithBarcode,
+  cart: propsCart,
+  onAddToCart: propsAddToCart,
+  onUpdateQuantity: propsUpdateQuantity,
+  onUpdateDiscount: propsUpdateDiscount,
+  onRemoveFromCart: propsRemoveFromCart,
+  onClearCart: propsClearCart,
 }) => {
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [internalCart, setInternalCart] = useState<CartItem[]>([]);
+  const isControlledCart = Array.isArray(propsCart);
+  const cart = isControlledCart ? propsCart : internalCart;
+
   const [manualBarcode, setManualBarcode] = useState('');
   const [barcodeAction, setBarcodeAction] = useState<'cart' | 'deduct'>('cart');
+  const [mobileTab, setMobileTab] = useState<'products' | 'cart'>('products');
   const [quickFeedback, setQuickFeedback] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -63,18 +85,14 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   });
 
   const addToCart = (product: Product) => {
-    if (product.stock <= 0) {
-      alert(`"${product.name}" is currently out of stock!`);
+    if (propsAddToCart) {
+      propsAddToCart(product);
       return;
     }
 
-    setCart((prev) => {
+    setInternalCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
       if (existing) {
-        if (existing.quantity >= product.stock) {
-          alert(`Cannot add more: only ${product.stock} items in stock.`);
-          return prev;
-        }
         return prev.map((item) =>
           item.product.id === product.id
             ? { ...item, quantity: item.quantity + 1 }
@@ -101,43 +119,47 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
     const item = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
 
     if (item) {
+      addToCart(item);
       if (barcodeAction === 'deduct') {
+        // User requested: "and when we click on deduct the scaned items should come in billing"
         if (item.stock <= 0) {
-          alert(`"${item.name}" is already out of stock!`);
-          return;
+          setQuickFeedback(`⚡ Added "${item.name}" to Bill (Note: Stock in system was 0)`);
+        } else {
+          setQuickFeedback(`⚡ Added "${item.name}" to Bill & Deducted 1 pc! (₹${item.sellingPrice})`);
         }
-        if (onDeductStock) {
-          await onDeductStock(item.barcode);
-        }
-        setQuickFeedback(`⚡ Reduced 1 piece of "${item.name}"! New stock: ${item.stock - 1} pcs.`);
         setTimeout(() => setQuickFeedback(null), 4000);
         setManualBarcode('');
       } else {
-        addToCart(item);
+        if (item.stock <= 0) {
+          setQuickFeedback(`🛒 Added to Cart: "${item.name}" (Note: Stock in system was 0)`);
+        } else {
+          setQuickFeedback(`🛒 Added to Cart: "${item.name}"`);
+        }
+        setTimeout(() => setQuickFeedback(null), 3000);
         setManualBarcode('');
       }
     } else {
       if (onOpenAddWithBarcode) {
-        if (confirm(`Barcode "${code}" is not in the system yet. Would you like to scan and add this clothing item now?`)) {
-          onOpenAddWithBarcode(code);
-          setManualBarcode('');
-        }
+        setQuickFeedback(`Barcode "${code}" not found. Opening form to add garment...`);
+        onOpenAddWithBarcode(code);
+        setManualBarcode('');
       } else {
-        alert(`Barcode ${code} not recognized in store catalog!`);
+        setQuickFeedback(`Barcode "${code}" not recognized! Click "+ Add Garment" to add it.`);
+        setTimeout(() => setQuickFeedback(null), 4000);
       }
     }
   };
 
   const updateQuantity = (productId: string, delta: number) => {
-    setCart((prev) =>
+    if (propsUpdateQuantity) {
+      propsUpdateQuantity(productId, delta);
+      return;
+    }
+    setInternalCart((prev) =>
       prev
         .map((item) => {
           if (item.product.id === productId) {
             const newQty = item.quantity + delta;
-            if (newQty > item.product.stock) {
-              alert(`Maximum available stock is ${item.product.stock}`);
-              return item;
-            }
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
           return item;
@@ -147,8 +169,12 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   };
 
   const updateDiscount = (productId: string, discount: number) => {
+    if (propsUpdateDiscount) {
+      propsUpdateDiscount(productId, discount);
+      return;
+    }
     const validDiscount = Math.max(0, Math.min(100, discount || 0));
-    setCart((prev) =>
+    setInternalCart((prev) =>
       prev.map((item) => {
         if (item.product.id === productId) {
           const discountedPrice = item.product.sellingPrice * (1 - validDiscount / 100);
@@ -164,11 +190,19 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   };
 
   const removeFromCart = (productId: string) => {
-    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    if (propsRemoveFromCart) {
+      propsRemoveFromCart(productId);
+      return;
+    }
+    setInternalCart((prev) => prev.filter((item) => item.product.id !== productId));
   };
 
   const clearCart = () => {
-    setCart([]);
+    if (propsClearCart) {
+      propsClearCart();
+      return;
+    }
+    setInternalCart([]);
   };
 
   // Calculations
@@ -217,7 +251,7 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
 
     onCompleteSale(newSale);
     setCompletedSale(newSale);
-    setCart([]);
+    clearCart();
     setCustomerName('');
     setCustomerPhone('');
 
@@ -312,9 +346,41 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 relative pb-16 lg:pb-0">
+      {/* Mobile Tab Switcher - Simple for cloth shop staff */}
+      <div className="lg:hidden col-span-12 flex gap-2 p-1 bg-slate-200 rounded-2xl">
+        <button
+          type="button"
+          onClick={() => setMobileTab('products')}
+          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            mobileTab === 'products'
+              ? 'bg-white text-slate-900 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span>👗 Browse Clothes ({filteredProducts.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('cart')}
+          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            mobileTab === 'cart'
+              ? 'bg-white text-emerald-800 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4 text-emerald-600" />
+          <span>Active Bill ({cart.length})</span>
+          {cart.length > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 bg-emerald-600 text-white rounded-full text-[10px] font-mono">
+              ₹{grandTotal.toFixed(0)}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Left Column: Product Catalog & Fast Barcode Scan (7 cols) */}
-      <div className="lg:col-span-7 space-y-4">
+      <div className={`lg:col-span-7 space-y-4 ${mobileTab === 'products' ? 'block' : 'hidden lg:block'}`}>
         {/* Top Hardware & Barcode Scanning Bar */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
           {quickFeedback && (
@@ -323,62 +389,97 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
               <button
                 type="button"
                 onClick={() => setQuickFeedback(null)}
-                className="text-amber-700 hover:text-amber-950 text-xs font-bold"
+                className="text-amber-700 hover:text-amber-950 text-xs font-bold px-1.5 py-0.5 rounded"
               >
                 ✕
               </button>
             </div>
           )}
 
+          {/* Mode Switcher: Add to Cart vs Deduct */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
               <button
                 type="button"
                 onClick={() => setBarcodeAction('cart')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                   barcodeAction === 'cart'
-                    ? 'bg-emerald-600 text-white shadow-xs'
+                    ? 'bg-emerald-700 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                🛒 Add to Cart
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Add to Cart</span>
               </button>
               <button
                 type="button"
                 onClick={() => setBarcodeAction('deduct')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                   barcodeAction === 'deduct'
-                    ? 'bg-amber-600 text-white shadow-xs'
+                    ? 'bg-amber-600 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <span>⚡ Deduct (-1 Stock)</span>
+                <MinusCircle className="w-3.5 h-3.5" />
+                <span>Deduct</span>
               </button>
             </div>
 
+            {/* Dynamic Context-Aware Action Buttons as requested:
+                If 'Add to Cart' -> [ Generate Barcode ] and [ Scan to Add ]
+                If 'Deduct' -> [ Scan to Deduct ]
+            */}
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('deduct') : onOpenScanner()}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs"
-                title="Open camera in Scan to Deduct -1 mode"
-              >
-                <Barcode className="w-4 h-4" />
-                <span>Scan to Deduct (-1)</span>
-              </button>
+              {barcodeAction === 'cart' ? (
+                <>
+                  {onOpenAddModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenAddModal}
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                      title="Add a new clothing item directly to the catalog"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ Add Garment</span>
+                    </button>
+                  )}
+                  {onOpenGenerateAndScan && (
+                    <button
+                      type="button"
+                      onClick={onOpenGenerateAndScan}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                      title="Generate unique barcode sticker tag and scan to add"
+                    >
+                      <Sparkles className="w-4 h-4 text-emerald-300" />
+                      <span>Generate Barcode</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('add') : onOpenScanner()}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                    title="Open camera to scan barcode and add to catalog/cart"
+                  >
+                    <PlusCircle className="w-4 h-4 text-emerald-200" />
+                    <span>Scan to Add</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('deduct') : onOpenScanner()}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+                  title="Open camera to scan barcode to deduct from stock and put on bill"
+                >
+                  <Barcode className="w-4 h-4 text-amber-200" />
+                  <span>Scan to Deduct</span>
+                </button>
+              )}
 
               <button
                 type="button"
-                onClick={onOpenScanner}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-all shadow-xs"
-              >
-                <Barcode className="w-4 h-4 text-emerald-400" />
-                <span>Camera Scan</span>
-              </button>
-              <button
-                type="button"
                 onClick={onOpenHardwareSettings}
-                className="p-1.5 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-medium transition-colors"
+                className="p-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs transition-colors"
                 title="POS Wi-Fi & Hardware Integration"
               >
                 <QrCode className="w-4 h-4" />
@@ -395,10 +496,10 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
                 onChange={(e) => setManualBarcode(e.target.value)}
                 placeholder={
                   barcodeAction === 'deduct'
-                    ? 'Scan/type barcode to instantly deduct 1 from stock...'
-                    : 'Scan or type barcode to add to checkout cart...'
+                    ? 'Scan or enter barcode to Deduct & Add to Bill...'
+                    : 'Scan or enter barcode to Add to Cart...'
                 }
-                className={`w-full pl-10 pr-3 py-2 text-sm border rounded-xl font-mono focus:bg-white focus:outline-none focus:ring-2 ${
+                className={`w-full pl-10 pr-3 py-2 text-xs sm:text-sm border rounded-xl font-mono focus:bg-white focus:outline-none focus:ring-2 ${
                   barcodeAction === 'deduct'
                     ? 'bg-amber-50/50 border-amber-300 focus:ring-amber-500'
                     : 'bg-slate-50 border-slate-300 focus:ring-emerald-500'
@@ -410,10 +511,10 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
               className={`px-4 py-2 text-white text-xs font-bold rounded-xl transition-all shadow-sm shrink-0 ${
                 barcodeAction === 'deduct'
                   ? 'bg-amber-600 hover:bg-amber-700'
-                  : 'bg-emerald-600 hover:bg-emerald-700'
+                  : 'bg-emerald-700 hover:bg-emerald-800'
               }`}
             >
-              {barcodeAction === 'deduct' ? 'Deduct 1' : 'Add Item'}
+              {barcodeAction === 'deduct' ? 'Deduct to Bill' : 'Add Item'}
             </button>
           </form>
         </div>
@@ -467,22 +568,32 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
             )}
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-xs text-slate-400">
-            No clothing designs match your current search or category filter.
+          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-xs text-slate-500 space-y-3">
+            <p>No clothing designs match your current search or category filter.</p>
+            {onOpenAddModal && (
+              <button
+                type="button"
+                onClick={onOpenAddModal}
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs inline-flex items-center gap-1.5 transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Add New Garment</span>
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[600px] overflow-y-auto pr-1">
             {filteredProducts.map((prod) => {
-            const isLowStock = prod.stock <= prod.minStockAlert;
+            const isLowStock = prod.stock <= prod.minStockAlert && prod.stock > 0;
             const isOut = prod.stock <= 0;
             return (
               <div
                 key={prod.id}
-                onClick={() => !isOut && addToCart(prod)}
-                className={`p-3.5 rounded-2xl border text-left transition-all duration-150 relative ${
+                onClick={() => addToCart(prod)}
+                className={`p-3.5 rounded-2xl border text-left transition-all duration-150 relative cursor-pointer ${
                   isOut
-                    ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
-                    : 'bg-white border-slate-200 hover:border-emerald-500 hover:shadow-md cursor-pointer'
+                    ? 'bg-amber-50/50 border-amber-300 hover:border-amber-500 hover:shadow-md'
+                    : 'bg-white border-slate-200 hover:border-emerald-500 hover:shadow-md'
                 }`}
               >
                 <div className="flex items-start justify-between gap-1 mb-1">
@@ -492,13 +603,13 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
                   <span
                     className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                       isOut
-                        ? 'bg-red-100 text-red-700'
+                        ? 'bg-amber-100 text-amber-900 font-bold'
                         : isLowStock
                         ? 'bg-amber-100 text-amber-800 animate-pulse'
                         : 'bg-slate-100 text-slate-700'
                     }`}
                   >
-                    {isOut ? 'Out of stock' : `${prod.stock} in stock`}
+                    {isOut ? '⚠️ 0 in stock (Click to add)' : `${prod.stock} in stock`}
                   </span>
                 </div>
 
@@ -526,8 +637,20 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
     </div>
 
       {/* Right Column: POS Billing Cart & Checkout (5 cols) */}
-      <div className="lg:col-span-5">
+      <div className={`lg:col-span-5 ${mobileTab === 'cart' ? 'block' : 'hidden lg:block'}`}>
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col h-full sticky top-4">
+          {/* Mobile Easy Back to Catalog Button */}
+          <div className="lg:hidden pb-3">
+            <button
+              type="button"
+              onClick={() => setMobileTab('products')}
+              className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all border border-slate-200"
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-600" />
+              <span>← Back to Clothes Catalog</span>
+            </button>
+          </div>
+
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl">
@@ -535,7 +658,13 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">Active Counter Bill</h3>
-                <span className="text-xs text-slate-400">{cart.length} item(s) selected</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-slate-400">{cart.length} item(s)</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200" title="Scans from mobile phone gun appear here live">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Mobile Gun Synced</span>
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -755,6 +884,26 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Sticky Mobile Floating Bill Button when on clothes catalog tab */}
+      {mobileTab === 'products' && cart.length > 0 && (
+        <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 animate-in slide-in-from-bottom-2">
+          <button
+            type="button"
+            onClick={() => setMobileTab('cart')}
+            className="w-full py-3.5 px-5 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-sm rounded-2xl shadow-xl flex items-center justify-between transition-all border border-emerald-600"
+          >
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5 text-emerald-200" />
+              <span>View Bill ({cart.length} item{cart.length > 1 ? 's' : ''})</span>
+            </div>
+            <div className="flex items-center gap-1 font-mono text-base font-bold">
+              <span>₹{grandTotal.toLocaleString()}</span>
+              <span>→</span>
+            </div>
+          </button>
         </div>
       )}
     </div>

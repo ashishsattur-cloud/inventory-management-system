@@ -46,6 +46,14 @@ let store: StoreData = loadData();
 // Real-Time SSE (Server-Sent Events) clients registry
 const sseClients = new Set<express.Response>();
 
+interface LiveSyncEvent {
+  id: string;
+  type: 'ITEM_SCANNED_FOR_BILL' | 'STOCK_INCREMENTED' | 'STOCK_DECREMENTED' | 'PRODUCT_ADDED' | 'CATALOG_UPDATED';
+  data: any;
+  timestamp: number;
+}
+let recentEvents: LiveSyncEvent[] = [];
+
 function broadcast(event: string, data: any) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const client of sseClients) {
@@ -55,6 +63,20 @@ function broadcast(event: string, data: any) {
       sseClients.delete(client);
     }
   }
+}
+
+function emitEvent(type: LiveSyncEvent['type'], data: any) {
+  const event: LiveSyncEvent = {
+    id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    type,
+    data,
+    timestamp: Date.now(),
+  };
+  recentEvents.unshift(event);
+  if (recentEvents.length > 60) {
+    recentEvents = recentEvents.slice(0, 60);
+  }
+  broadcast(type, data);
 }
 
 // Keep-alive heartbeat every 15 seconds to keep mobile connections alive
@@ -76,6 +98,18 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     connectedDevices: sseClients.size,
     productsCount: store.products.length,
+    serverTime: Date.now(),
+  });
+});
+
+// Real-time scan events log for robust polling fallback
+app.get('/api/scan-events', (req, res) => {
+  const since = Number(req.query.since) || 0;
+  const events = recentEvents.filter((e) => e.timestamp > since);
+  res.json({
+    events,
+    serverTime: Date.now(),
+    connectedDevices: sseClients.size,
   });
 });
 
@@ -114,15 +148,88 @@ app.post('/api/products', (req, res) => {
   }
 
   const existingIdx = store.products.findIndex((p) => p.id === product.id || p.barcode === product.barcode);
-  if (existingIdx >= 0) {
+  const isNew = existingIdx < 0;
+  if (!isNew) {
     store.products[existingIdx] = product;
   } else {
     store.products.unshift(product);
   }
 
   saveData(store);
-  broadcast('CATALOG_UPDATED', store);
-  res.json({ success: true, product });
+  if (isNew) {
+    emitEvent('PRODUCT_ADDED', { product, deviceName: req.body.deviceName || 'Scanner' });
+  }
+  emitEvent('CATALOG_UPDATED', store);
+  res.json({ success: true, product, isNew });
+});
+
+// Quick add product from mobile scanner or POS
+app.post('/api/products/quick-add', (req, res) => {
+  const {
+    barcode,
+    name,
+    category = 'Saree',
+    fabricType = 'Pure Cotton',
+    workPattern = 'Handblock Print',
+    size = 'Free Size',
+    color = 'Multicolor',
+    costPrice = 0,
+    sellingPrice = 1200,
+    stock = 10,
+    minStockAlert = 4,
+    rackLocation = 'Bay 1 - Main Floor Rack',
+    supplierId = 'Direct Mill Purchase',
+    deviceName = 'Mobile Scanner',
+  } = req.body;
+
+  if (!barcode || !name) {
+    return res.status(400).json({ error: 'Barcode and garment name are required' });
+  }
+
+  const cleanBarcode = String(barcode).trim();
+  const existing = store.products.find((p) => p.barcode === cleanBarcode);
+  if (existing) {
+    // If already exists, increment stock instead
+    existing.stock += Number(stock) || 1;
+    existing.sellingPrice = Number(sellingPrice) || existing.sellingPrice;
+    existing.updatedAt = new Date().toISOString().split('T')[0];
+    saveData(store);
+    emitEvent('STOCK_INCREMENTED', {
+      barcode: existing.barcode,
+      product: existing,
+      newStock: existing.stock,
+      deviceName,
+      timestamp: new Date().toLocaleTimeString(),
+    });
+    emitEvent('CATALOG_UPDATED', store);
+    return res.json({ success: true, product: existing, restocked: true });
+  }
+
+  const newProduct = {
+    id: 'prod-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+    sku: `SKU-${category.slice(0, 3).toUpperCase()}-${cleanBarcode.slice(-4)}`,
+    barcode: cleanBarcode,
+    name: name.trim(),
+    category,
+    fabricType,
+    workPattern,
+    size,
+    color,
+    costPrice: Number(costPrice) || 0,
+    sellingPrice: Number(sellingPrice) || 1200,
+    stock: Math.max(0, Number(stock) || 10),
+    minStockAlert: Number(minStockAlert) || 4,
+    supplierId,
+    rackLocation,
+    createdAt: new Date().toISOString().split('T')[0],
+    updatedAt: new Date().toISOString().split('T')[0],
+  };
+
+  store.products.unshift(newProduct);
+  saveData(store);
+  emitEvent('PRODUCT_ADDED', { product: newProduct, deviceName });
+  emitEvent('CATALOG_UPDATED', store);
+  res.json({ success: true, product: newProduct });
 });
 
 // Delete product
@@ -130,7 +237,7 @@ app.delete('/api/products/:id', (req, res) => {
   const { id } = req.params;
   store.products = store.products.filter((p) => p.id !== id && p.barcode !== id);
   saveData(store);
-  broadcast('CATALOG_UPDATED', store);
+  emitEvent('CATALOG_UPDATED', store);
   res.json({ success: true });
 });
 
@@ -150,41 +257,89 @@ app.post('/api/products/adjust-stock', (req, res) => {
   prod.updatedAt = new Date().toISOString().split('T')[0];
 
   saveData(store);
-  broadcast('CATALOG_UPDATED', store);
+  emitEvent('CATALOG_UPDATED', store);
   res.json({ success: true, product: prod });
 });
 
-// Scan handler: Scan to deduct (-1 stock), add, or lookup
+// Scan handler: Scan to Cart/Billing, Add to Inventory, Deduct, or Lookup
 app.post('/api/scan', (req, res) => {
-  const { barcode, mode = 'deduct', deviceName = 'Mobile Device' } = req.body;
+  const { barcode, mode = 'cart', deviceName = 'Mobile Scanner', quantity = 1 } = req.body;
   if (!barcode) {
     return res.status(400).json({ error: 'Barcode is required' });
   }
 
+  const cleanBarcode = String(barcode).trim();
   const prod = store.products.find(
-    (p) => p.barcode === barcode || (p.sku && p.sku.toLowerCase() === barcode.toLowerCase())
+    (p) => p.barcode === cleanBarcode || (p.sku && p.sku.toLowerCase() === cleanBarcode.toLowerCase())
   );
 
   if (!prod) {
     return res.status(404).json({
       success: false,
-      error: 'Product not registered in store catalog',
-      barcode,
+      notFound: true,
+      error: `Barcode "${cleanBarcode}" not registered in store catalog`,
+      barcode: cleanBarcode,
     });
   }
 
-  if (mode === 'deduct') {
-    if (prod.stock <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: `"${prod.name}" is already out of stock!`,
-        product: prod,
-      });
-    }
+  // MODE 1: ADD TO CART / BILL (Real-Time Counter Sync)
+  if (mode === 'cart' || mode === 'bill') {
+    const qty = typeof quantity === 'number' && quantity > 0 ? quantity : 1;
+    const scanEventPayload = {
+      barcode: prod.barcode,
+      product: prod,
+      quantity: qty,
+      deviceName,
+      timestamp: new Date().toLocaleTimeString(),
+    };
 
-    // Decrement stock by 1
+    emitEvent('ITEM_SCANNED_FOR_BILL', scanEventPayload);
+
+    return res.json({
+      success: true,
+      action: 'cart',
+      product: prod,
+      quantity: qty,
+      message: `Added 1 pc of "${prod.name}" to Laptop Bill (₹${prod.sellingPrice})`,
+    });
+  }
+
+  // MODE 2: ADD ITEM (Restock or Register to Inventory)
+  if (mode === 'add') {
+    const addQty = typeof quantity === 'number' && quantity > 0 ? quantity : 1;
     const oldStock = prod.stock;
-    prod.stock = Math.max(0, prod.stock - 1);
+    prod.stock += addQty;
+    prod.updatedAt = new Date().toISOString().split('T')[0];
+    saveData(store);
+
+    const scanEventPayload = {
+      barcode: prod.barcode,
+      product: prod,
+      oldStock,
+      newStock: prod.stock,
+      addedQty: addQty,
+      deviceName,
+      timestamp: new Date().toLocaleTimeString(),
+    };
+
+    emitEvent('STOCK_INCREMENTED', scanEventPayload);
+    emitEvent('CATALOG_UPDATED', store);
+
+    return res.json({
+      success: true,
+      action: 'incremented',
+      product: prod,
+      oldStock,
+      newStock: prod.stock,
+      message: `Restocked ${addQty} pc(s) for "${prod.name}". Current Stock: ${prod.stock}`,
+    });
+  }
+
+  // MODE 3: DEDUCT
+  if (mode === 'deduct') {
+    const deductQty = typeof quantity === 'number' && quantity > 0 ? quantity : 1;
+    const oldStock = prod.stock;
+    prod.stock = Math.max(0, prod.stock - deductQty);
     prod.updatedAt = new Date().toISOString().split('T')[0];
 
     // Record automatic scan sale/deduction
@@ -201,16 +356,17 @@ app.post('/api/scan', (req, res) => {
           category: prod.category,
           fabricType: prod.fabricType,
           size: prod.size,
-          quantity: 1,
+          quantity: deductQty,
           unitPrice: prod.sellingPrice,
           discountPercent: 0,
-          total: prod.sellingPrice,
+          total: prod.sellingPrice * deductQty,
+          costPrice: prod.costPrice || 0,
         },
       ],
-      subtotal: prod.sellingPrice,
+      subtotal: prod.sellingPrice * deductQty,
       discountTotal: 0,
-      tax: Number((prod.sellingPrice * 0.05).toFixed(2)),
-      grandTotal: Number((prod.sellingPrice * 1.05).toFixed(2)),
+      tax: Number((prod.sellingPrice * deductQty * 0.05).toFixed(2)),
+      grandTotal: Number((prod.sellingPrice * deductQty * 1.05).toFixed(2)),
       paymentMethod: 'Scan to Deduct',
       notes: `Deducted via scan from ${deviceName}`,
     };
@@ -218,17 +374,17 @@ app.post('/api/scan', (req, res) => {
     store.sales.unshift(deductionSale);
     saveData(store);
 
-    // Broadcast real-time stock deduction to all laptops & phones
-    broadcast('STOCK_DECREMENTED', {
+    const scanEventPayload = {
       barcode: prod.barcode,
       product: prod,
       oldStock,
       newStock: prod.stock,
       deviceName,
       timestamp: new Date().toLocaleTimeString(),
-    });
+    };
 
-    broadcast('CATALOG_UPDATED', store);
+    emitEvent('STOCK_DECREMENTED', scanEventPayload);
+    emitEvent('CATALOG_UPDATED', store);
 
     return res.json({
       success: true,
@@ -236,30 +392,7 @@ app.post('/api/scan', (req, res) => {
       product: prod,
       oldStock,
       newStock: prod.stock,
-      message: `Stock for "${prod.name}" reduced from ${oldStock} to ${prod.stock} (-1)`,
-    });
-  } else if (mode === 'add') {
-    const oldStock = prod.stock;
-    prod.stock += 1;
-    prod.updatedAt = new Date().toISOString().split('T')[0];
-    saveData(store);
-
-    broadcast('STOCK_INCREMENTED', {
-      barcode: prod.barcode,
-      product: prod,
-      oldStock,
-      newStock: prod.stock,
-      deviceName,
-      timestamp: new Date().toLocaleTimeString(),
-    });
-    broadcast('CATALOG_UPDATED', store);
-
-    return res.json({
-      success: true,
-      action: 'incremented',
-      product: prod,
-      oldStock,
-      newStock: prod.stock,
+      message: `Stock for "${prod.name}" reduced from ${oldStock} to ${prod.stock} (-${deductQty})`,
     });
   }
 

@@ -11,10 +11,14 @@ import {
   PlusCircle,
   Search,
   Sparkles,
-  Plus
+  Plus,
+  ShoppingCart,
+  ArrowLeft
 } from 'lucide-react';
 import { Product } from '../types';
-import { playChime } from '../services/api';
+import { playChime, apiScanBarcode } from '../services/api';
+
+export type ScannerMode = 'add' | 'deduct' | 'cart' | 'lookup';
 
 interface BarcodeScannerModalProps {
   isOpen: boolean;
@@ -23,8 +27,9 @@ interface BarcodeScannerModalProps {
   onBarcodeDetected: (barcode: string, product?: Product) => void;
   onDeductStock?: (barcode: string) => Promise<any> | void;
   onIncrementStock?: (barcode: string) => Promise<any> | void;
+  onAddToCart?: (product: Product) => void;
   onOpenAddWithBarcode?: (barcode: string) => void;
-  initialMode?: 'deduct' | 'lookup' | 'add';
+  initialMode?: ScannerMode;
   title?: string;
   subtitle?: string;
 }
@@ -36,12 +41,20 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onBarcodeDetected,
   onDeductStock,
   onIncrementStock,
+  onAddToCart,
   onOpenAddWithBarcode,
-  initialMode = 'deduct',
+  initialMode = 'add',
   title = 'Scan Clothing Barcode',
-  subtitle = 'Point camera at garment tag to adjust stock or look up details'
+  subtitle = 'Point camera at garment tag to add stock, deduct, add to cart, or look up details'
 }) => {
-  const [scanMode, setScanMode] = useState<'deduct' | 'lookup' | 'add'>(initialMode);
+  const [scanMode, setScanMode] = useState<ScannerMode>(initialMode);
+  const scanModeRef = useRef<ScannerMode>(initialMode);
+
+  // Keep ref synchronized with current active mode so camera scanner reads latest selection
+  useEffect(() => {
+    scanModeRef.current = scanMode;
+  }, [scanMode]);
+
   const [scanResult, setScanResult] = useState<{
     barcode: string;
     product?: Product;
@@ -55,7 +68,17 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
   const lastScannedRef = useRef<{ barcode: string; time: number }>({ barcode: '', time: 0 });
 
-  // Reset or clear scanner on modal open/close
+  // When modal is opened, synchronize with initialMode without wiping subsequent user selections
+  useEffect(() => {
+    if (isOpen) {
+      setScanMode(initialMode || 'add');
+      setScanResult(null);
+      setManualCode('');
+    }
+  }, [isOpen, initialMode]);
+
+  // Camera lifecycle: initializes when opened, clears when closed.
+  // CRITICAL: Does NOT depend on scanMode, preventing camera reset and state wipe when user switches modes.
   useEffect(() => {
     if (!isOpen) {
       if (scannerRef.current) {
@@ -70,8 +93,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       setCameraError(null);
       return;
     }
-
-    setScanMode(initialMode);
 
     // Initialize HTML5-QRCode Scanner
     const elementId = 'retail-qr-scanner-region';
@@ -113,9 +134,18 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         } catch (e) {}
       }
     };
-  }, [isOpen, scanMode]);
+  }, [isOpen]);
 
-  // Handle scanned code with debouncing and stock deduction
+  const handleClose = () => {
+    if (scannerRef.current) {
+      try {
+        scannerRef.current.clear();
+      } catch (e) {}
+    }
+    onClose();
+  };
+
+  // Handle scanned code with debouncing and current active mode
   const handleScannedCode = async (trimmed: string) => {
     const now = Date.now();
     // 2-second debounce for identical barcode to prevent accidental rapid re-scans
@@ -128,49 +158,39 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       (p) => p.barcode === trimmed || p.sku.toLowerCase() === trimmed.toLowerCase()
     );
 
+    const activeMode = scanModeRef.current;
+
     if (!matched) {
       playChime('alert');
       setScanResult({
         barcode: trimmed,
-        actionMessage: `Barcode "${trimmed}" not found in catalog.`,
+        actionMessage: `Barcode "${trimmed}" not found in inventory catalog. You can register it below!`,
         isError: true,
       });
       onBarcodeDetected(trimmed, undefined);
       return;
     }
 
-    if (scanMode === 'deduct') {
-      if (matched.stock <= 0) {
-        playChime('alert');
-        setScanResult({
-          barcode: trimmed,
-          product: matched,
-          actionMessage: `⚠️ "${matched.name}" is already out of stock (0 pcs left)!`,
-          isError: true,
-        });
-        return;
-      }
-
+    if (activeMode === 'deduct') {
       setIsProcessing(true);
       playChime('deduct');
 
-      if (onDeductStock) {
-        try {
-          await onDeductStock(trimmed);
-        } catch (err) {
-          console.error('Error deducting stock:', err);
-        }
+      // The user specified: when we click on deduct the scanned items should come in billing
+      if (onAddToCart) {
+        onAddToCart(matched);
       }
 
       setScanResult({
         barcode: trimmed,
         product: matched,
-        actionMessage: `Deducted 1 item from inventory! Stock is now ${matched.stock - 1} pcs.`,
+        actionMessage: matched.stock <= 0
+          ? `⚡ Added "${matched.name}" to Active Bill (Note: Stock in system was 0)`
+          : `🛒 Added "${matched.name}" to Bill & Deducted 1 pc! (MRP: ₹${matched.sellingPrice})`,
         isError: false,
       });
       onBarcodeDetected(trimmed, matched);
       setIsProcessing(false);
-    } else if (scanMode === 'add') {
+    } else if (activeMode === 'add') {
       setIsProcessing(true);
       playChime('success');
 
@@ -185,18 +205,37 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       setScanResult({
         barcode: trimmed,
         product: matched,
-        actionMessage: `Added 1 item to inventory! Stock is now ${matched.stock + 1} pcs.`,
+        actionMessage: `📦 Added 1 piece to inventory! Stock is now ${matched.stock + 1} pcs.`,
         isError: false,
       });
       onBarcodeDetected(trimmed, matched);
       setIsProcessing(false);
+    } else if (activeMode === 'cart') {
+      playChime('success');
+      if (onAddToCart) {
+        onAddToCart(matched);
+      }
+      try {
+        apiScanBarcode(trimmed, 'cart', 'Counter/Modal Scanner');
+      } catch (err) {
+        console.warn('Sync scan failed:', err);
+      }
+      setScanResult({
+        barcode: trimmed,
+        product: matched,
+        actionMessage: matched.stock <= 0
+          ? `🛒 Added "${matched.name}" to Active Bill (Note: Stock in system was 0)`
+          : `🛒 Added 1 piece of "${matched.name}" to POS Cart! (Price: ₹${matched.sellingPrice})`,
+        isError: false,
+      });
+      onBarcodeDetected(trimmed, matched);
     } else {
       // Lookup only
       playChime('success');
       setScanResult({
         barcode: trimmed,
         product: matched,
-        actionMessage: `Found "${matched.name}" (Stock: ${matched.stock} pcs, MRP: ₹${matched.sellingPrice})`,
+        actionMessage: `🔍 Found "${matched.name}" (Stock: ${matched.stock} pcs, MRP: ₹${matched.sellingPrice}, Rack: ${matched.rackLocation || 'Bay 1'})`,
         isError: false,
       });
       onBarcodeDetected(trimmed, matched);
@@ -213,97 +252,147 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 my-4">
-        {/* Header */}
-        <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-              <Camera className="w-5 h-5" />
-            </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 my-2 max-h-[95vh] flex flex-col">
+        {/* Header with prominent Back Button */}
+        <div className="px-4 sm:px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs border border-slate-700"
+              title="Return to store screen"
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-400" />
+              <span>← Back</span>
+            </button>
             <div>
-              <h3 className="font-semibold text-base text-slate-50">{title}</h3>
-              <p className="text-xs text-slate-300">{subtitle}</p>
+              <h3 className="font-bold text-sm sm:text-base text-slate-50 leading-tight">{title}</h3>
+              <p className="text-[11px] text-slate-300 hidden sm:block">{subtitle}</p>
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scan Mode Selector Tabs */}
-        <div className="p-3 bg-slate-100 border-b border-slate-200">
-          <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 px-1">
-            Choose Scanner Action:
+        <div className="p-3.5 bg-slate-100 border-b border-slate-200">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+              Select Scanner Mode:
+            </div>
+            {onOpenAddWithBarcode && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenAddWithBarcode('');
+                  onClose();
+                }}
+                className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 shadow-2xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Register New Item</span>
+              </button>
+            )}
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setScanMode('deduct');
-                setScanResult(null);
-              }}
-              className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                scanMode === 'deduct'
-                  ? 'bg-amber-600 text-white shadow-sm ring-2 ring-amber-400'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-              }`}
-            >
-              <MinusCircle className="w-4 h-4" />
-              <span>Deduct (-1)</span>
-            </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setScanMode('lookup');
-                setScanResult(null);
-              }}
-              className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                scanMode === 'lookup'
-                  ? 'bg-slate-800 text-white shadow-sm ring-2 ring-slate-600'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
-              }`}
-            >
-              <Search className="w-4 h-4" />
-              <span>Lookup</span>
-            </button>
-
+          <div className={`grid ${onAddToCart ? 'grid-cols-4' : 'grid-cols-3'} gap-1.5 sm:gap-2`}>
+            {/* Add / Restock Tab */}
             <button
               type="button"
               onClick={() => {
                 setScanMode('add');
                 setScanResult(null);
               }}
-              className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+              className={`py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                 scanMode === 'add'
                   ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-400'
                   : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
               }`}
             >
-              <PlusCircle className="w-4 h-4" />
-              <span>Restock (+1)</span>
+              <PlusCircle className="w-4 h-4 text-emerald-300" />
+              <span>Add (+1)</span>
+            </button>
+
+            {/* Deduct Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setScanMode('deduct');
+                setScanResult(null);
+              }}
+              className={`py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                scanMode === 'deduct'
+                  ? 'bg-amber-600 text-white shadow-sm ring-2 ring-amber-400'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <MinusCircle className="w-4 h-4 text-amber-200" />
+              <span>Deduct (-1)</span>
+            </button>
+
+            {/* Add to Cart Tab (optional when POS cart callback is provided) */}
+            {onAddToCart && (
+              <button
+                type="button"
+                onClick={() => {
+                  setScanMode('cart');
+                  setScanResult(null);
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                  scanMode === 'cart'
+                    ? 'bg-teal-700 text-white shadow-sm ring-2 ring-teal-400'
+                    : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+                }`}
+              >
+                <ShoppingCart className="w-4 h-4 text-teal-200" />
+                <span>To Cart</span>
+              </button>
+            )}
+
+            {/* Lookup Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setScanMode('lookup');
+                setScanResult(null);
+              }}
+              className={`py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                scanMode === 'lookup'
+                  ? 'bg-slate-800 text-white shadow-sm ring-2 ring-slate-600'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Search className="w-4 h-4 text-slate-300" />
+              <span>Lookup</span>
             </button>
           </div>
 
           {/* Mode Guidance banner */}
           <div className="mt-2 text-[11px] text-center font-medium">
+            {scanMode === 'add' && (
+              <span className="text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 inline-block w-full">
+                📦 <strong>Add Mode Active:</strong> Scanned garments will receive +1 piece to current inventory stock.
+              </span>
+            )}
             {scanMode === 'deduct' && (
               <span className="text-amber-800 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200 inline-block w-full">
-                ⚡ <strong>Deduct Mode Active:</strong> Every scanned tag immediately reduces stock count by 1.
+                ⚡ <strong>Deduct Mode Active:</strong> Scanned garment tags will immediately reduce stock count by 1.
+              </span>
+            )}
+            {scanMode === 'cart' && (
+              <span className="text-teal-800 bg-teal-50 px-2.5 py-1 rounded-md border border-teal-200 inline-block w-full">
+                🛒 <strong>Cart Mode Active:</strong> Scanned garment items will be placed into the customer's checkout cart.
               </span>
             )}
             {scanMode === 'lookup' && (
               <span className="text-slate-700 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200 inline-block w-full">
-                🔍 <strong>Lookup Mode:</strong> Scans garment tag to display price, rack location, and stock.
-              </span>
-            )}
-            {scanMode === 'add' && (
-              <span className="text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 inline-block w-full">
-                ➕ <strong>Restock Mode:</strong> Scanning increases inventory stock by 1 per scan.
+                🔍 <strong>Lookup Mode Active:</strong> Inspects garment details, rack location, and stock without altering numbers.
               </span>
             )}
           </div>
@@ -351,7 +440,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 )}
 
                 {scanResult.isError && onOpenAddWithBarcode && !scanResult.product && (
-                  <div className="mt-2">
+                  <div className="mt-2.5">
                     <button
                       type="button"
                       onClick={() => {
@@ -361,7 +450,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                       className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Add &amp; Register Garment with this Barcode →</span>
+                      <span>Register &amp; Add Garment with Barcode "{scanResult.barcode}" →</span>
                     </button>
                   </div>
                 )}
@@ -376,15 +465,23 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 type="text"
                 value={manualCode}
                 onChange={(e) => setManualCode(e.target.value)}
-                placeholder={`Type barcode to ${scanMode === 'deduct' ? 'deduct 1' : scanMode === 'add' ? 'add 1' : 'lookup'}...`}
+                placeholder={`Type barcode to ${
+                  scanMode === 'deduct'
+                    ? 'deduct 1'
+                    : scanMode === 'add'
+                    ? 'add (+1 stock)'
+                    : scanMode === 'cart'
+                    ? 'add to cart'
+                    : 'lookup details'
+                }...`}
                 className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
               <button
                 type="submit"
                 disabled={isProcessing}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm shrink-0"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-sm shrink-0 flex items-center gap-1"
               >
-                Scan Code
+                <span>Process Code</span>
               </button>
             </form>
 
@@ -418,14 +515,15 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+        {/* Footer with easy back button */}
+        <div className="px-4 sm:px-5 py-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
           <button
             type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
+            onClick={handleClose}
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
           >
-            Close Scanner
+            <ArrowLeft className="w-4 h-4 text-emerald-400" />
+            <span>← Done Scanning / Back to Shop Counter</span>
           </button>
         </div>
       </div>
