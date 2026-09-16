@@ -181,9 +181,9 @@ export const PosHardwareModal: React.FC<PosHardwareModalProps> = ({
                       No garments added yet. Use "Generate &amp; Scan Barcode" on the inventory page to add garments first.
                     </div>
                   ) : (
-                    products.slice(0, 3).map((p) => (
+                    products.slice(0, 3).map((p, pIdx) => (
                       <div
-                        key={p.id}
+                        key={p.id ? `hw-prod-${p.id}-${pIdx}` : `hw-bar-${p.barcode || 'item'}-${pIdx}`}
                         className="p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between text-xs"
                       >
                         <div>

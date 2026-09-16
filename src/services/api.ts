@@ -1,4 +1,4 @@
-import { Product, Supplier, SaleTransaction } from '../types';
+import { Product, Supplier, SaleTransaction, DeviceAuthRecord, SecurityStatusResponse, normalizeProduct, AuthUser } from '../types';
 
 export interface ScanResult {
   success: boolean;
@@ -14,8 +14,31 @@ export interface ScanResult {
 }
 
 export interface SyncEventData {
-  type: 'INIT' | 'CATALOG_UPDATED' | 'STOCK_DECREMENTED' | 'STOCK_INCREMENTED' | 'ITEM_SCANNED_FOR_BILL' | 'PRODUCT_ADDED';
+  type:
+    | 'INIT'
+    | 'CATALOG_UPDATED'
+    | 'STOCK_DECREMENTED'
+    | 'STOCK_INCREMENTED'
+    | 'ITEM_SCANNED_FOR_BILL'
+    | 'PRODUCT_ADDED'
+    | 'BARCODE_SCANNED'
+    | 'SECURITY_DEVICE_APPROVED'
+    | 'SECURITY_DEVICE_REJECTED'
+    | 'SECURITY_REQUEST_CREATED';
   data?: any;
+}
+
+// Active Server Health Check
+export async function apiCheckServerHealth(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch('/api/health', { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
 }
 
 // Fetch initial inventory from server with fallback to localStorage
@@ -29,7 +52,7 @@ export async function fetchServerInventory(): Promise<{
     if (res.ok) {
       const data = await res.json();
       return {
-        products: data.products || [],
+        products: Array.isArray(data.products) ? data.products.map(normalizeProduct) : [],
         suppliers: data.suppliers || [],
         sales: data.sales || [],
       };
@@ -180,8 +203,137 @@ export interface LiveSyncOptions {
   onStockIncremented?: (data: { barcode: string; product: Product; oldStock: number; newStock: number; deviceName: string }) => void;
   onItemScannedForBill?: (data: { barcode: string; product: Product; quantity: number; deviceName: string; timestamp: string }) => void;
   onProductAdded?: (data: { product: Product; deviceName: string }) => void;
+  onBarcodeScanned?: (data: { barcode: string; product: Product | null; deviceName: string; timestamp: number; timeStr?: string }) => void;
   onSaleCompleted?: (sale: SaleTransaction) => void;
+  onSecurityApproved?: (data: { deviceId: string; token: string; record: any }) => void;
+  onSecurityRejected?: (data: { deviceId: string; record: any }) => void;
+  onSecurityRequestCreated?: (record: any) => void;
   onStatusChange?: (status: { connected: boolean; clients: number }) => void;
+}
+
+// --- SECURITY & DEVICE VERIFICATION API ---
+
+export async function apiGetMyIp(): Promise<{ ip: string; userAgent: string; targetApprover: string }> {
+  try {
+    const res = await fetch('/api/security/my-ip');
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Failed to get IP:', err);
+  }
+  return { ip: '127.0.0.1 (Local)', userAgent: navigator.userAgent, targetApprover: 'ashish.sattur@gmail.com' };
+}
+
+export async function apiRequestDeviceAccess(payload: {
+  deviceId: string;
+  stationName?: string;
+  os?: string;
+  browser?: string;
+  screenResolution?: string;
+  token?: string;
+}): Promise<{
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requestId?: string;
+  token?: string;
+  record?: DeviceAuthRecord;
+  ipAddress?: string;
+  targetEmail?: string;
+  message?: string;
+}> {
+  try {
+    const res = await fetch('/api/security/request-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Request device access failed:', err);
+    return { status: 'PENDING', message: 'Failed to reach authorization server' };
+  }
+}
+
+export async function apiCheckSecurityStatus(params: {
+  deviceId?: string;
+  token?: string;
+  requestId?: string;
+}): Promise<SecurityStatusResponse> {
+  try {
+    const searchParams = new URLSearchParams();
+    if (params.deviceId) searchParams.set('deviceId', params.deviceId);
+    if (params.token) searchParams.set('token', params.token);
+    if (params.requestId) searchParams.set('requestId', params.requestId);
+    const res = await fetch(`/api/security/status?${searchParams.toString()}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Security status check failed:', err);
+  }
+  return { status: 'NOT_FOUND' };
+}
+
+export async function apiApproveDevice(payload: {
+  requestId?: string;
+  deviceId?: string;
+  approvedBy?: string;
+}): Promise<{ success: boolean; token?: string; record?: DeviceAuthRecord }> {
+  try {
+    const res = await fetch('/api/security/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Approval failed:', err);
+    return { success: false };
+  }
+}
+
+export async function apiRejectDevice(requestId: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/security/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId }),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function apiGetSecurityList(): Promise<{
+  approved: DeviceAuthRecord[];
+  pending: DeviceAuthRecord[];
+  allRequests: DeviceAuthRecord[];
+  notificationsLog: any[];
+  targetEmail: string;
+}> {
+  try {
+    const res = await fetch('/api/security/list');
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Failed to fetch security list:', err);
+  }
+  return { approved: [], pending: [], allRequests: [], notificationsLog: [], targetEmail: 'ashish.sattur@gmail.com' };
+}
+
+export async function apiRevokeDevice(deviceId?: string, token?: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/security/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId, token }),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
 }
 
 /**
@@ -212,6 +364,13 @@ export function subscribeToLiveSync(
   let lastEventTime = Date.now();
   const processedEventIds = new Set<string>();
 
+  // Initial immediate health verification
+  apiCheckServerHealth().then((isHealthy) => {
+    if (!isUnmounted && isHealthy) {
+      options.onStatusChange?.({ connected: true, clients: 1 });
+    }
+  });
+
   function handleIncomingEvent(type: string, payload: any, eventId?: string) {
     if (eventId) {
       if (processedEventIds.has(eventId)) return;
@@ -232,8 +391,16 @@ export function subscribeToLiveSync(
       options.onItemScannedForBill?.(payload);
     } else if (type === 'PRODUCT_ADDED') {
       options.onProductAdded?.(payload);
+    } else if (type === 'BARCODE_SCANNED') {
+      options.onBarcodeScanned?.(payload);
     } else if (type === 'SALE_COMPLETED') {
       options.onSaleCompleted?.(payload);
+    } else if (type === 'SECURITY_DEVICE_APPROVED') {
+      options.onSecurityApproved?.(payload);
+    } else if (type === 'SECURITY_DEVICE_REJECTED') {
+      options.onSecurityRejected?.(payload);
+    } else if (type === 'SECURITY_REQUEST_CREATED') {
+      options.onSecurityRequestCreated?.(payload);
     }
   }
 
@@ -252,12 +419,18 @@ export function subscribeToLiveSync(
             handleIncomingEvent(ev.type, ev.data, ev.id);
           }
         }
-        if (typeof data.connectedDevices === 'number') {
-          options.onStatusChange?.({ connected: true, clients: data.connectedDevices });
-        }
+        options.onStatusChange?.({
+          connected: true,
+          clients: Math.max(1, typeof data.connectedDevices === 'number' ? data.connectedDevices : 1),
+        });
+      } else {
+        const healthy = await apiCheckServerHealth();
+        options.onStatusChange?.({ connected: healthy, clients: healthy ? 1 : 0 });
       }
     } catch (e) {
-      // Background poll failure is silent
+      // If poll fails, double check server health
+      const healthy = await apiCheckServerHealth();
+      options.onStatusChange?.({ connected: healthy, clients: healthy ? 1 : 0 });
     }
   }
 
@@ -277,9 +450,10 @@ export function subscribeToLiveSync(
           if (payload.store) {
             options.onCatalogUpdate(payload.store);
           }
-          if (typeof payload.connectedDevices === 'number') {
-            options.onStatusChange?.({ connected: true, clients: payload.connectedDevices });
-          }
+          options.onStatusChange?.({
+            connected: true,
+            clients: Math.max(1, typeof payload.connectedDevices === 'number' ? payload.connectedDevices : 1),
+          });
         } catch (err) {
           console.error('Error parsing INIT SSE event:', err);
         }
@@ -320,6 +494,13 @@ export function subscribeToLiveSync(
         } catch (err) {}
       });
 
+      eventSource.addEventListener('BARCODE_SCANNED', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          handleIncomingEvent('BARCODE_SCANNED', payload);
+        } catch (err) {}
+      });
+
       eventSource.addEventListener('SALE_COMPLETED', (e: MessageEvent) => {
         try {
           const payload = JSON.parse(e.data);
@@ -327,8 +508,30 @@ export function subscribeToLiveSync(
         } catch (err) {}
       });
 
-      eventSource.onerror = () => {
-        options.onStatusChange?.({ connected: false, clients: 1 });
+      eventSource.addEventListener('SECURITY_DEVICE_APPROVED', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          handleIncomingEvent('SECURITY_DEVICE_APPROVED', payload);
+        } catch (err) {}
+      });
+
+      eventSource.addEventListener('SECURITY_DEVICE_REJECTED', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          handleIncomingEvent('SECURITY_DEVICE_REJECTED', payload);
+        } catch (err) {}
+      });
+
+      eventSource.addEventListener('SECURITY_REQUEST_CREATED', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          handleIncomingEvent('SECURITY_REQUEST_CREATED', payload);
+        } catch (err) {}
+      });
+
+      eventSource.onerror = async () => {
+        const isHealthy = await apiCheckServerHealth();
+        options.onStatusChange?.({ connected: isHealthy, clients: isHealthy ? 1 : 0 });
         if (eventSource) {
           eventSource.close();
           eventSource = null;
@@ -338,13 +541,15 @@ export function subscribeToLiveSync(
         }
       };
     } catch (err) {
-      options.onStatusChange?.({ connected: false, clients: 1 });
+      apiCheckServerHealth().then((isHealthy) => {
+        options.onStatusChange?.({ connected: isHealthy, clients: isHealthy ? 1 : 0 });
+      });
       retryTimer = setTimeout(connect, 3000);
     }
   }
 
   connect();
-  pollTimer = setInterval(pollRecentEvents, 2000);
+  pollTimer = setInterval(pollRecentEvents, 2500);
 
   return () => {
     isUnmounted = true;
@@ -357,13 +562,13 @@ export function subscribeToLiveSync(
 /**
  * Audio chime using Web Audio API for instant scan feedback on both mobile and laptop
  */
-export function playChime(type: 'deduct' | 'success' | 'alert' = 'deduct') {
+export function playChime(type: 'deduct' | 'success' | 'alert' | 'beep' | 'chime' = 'deduct') {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
 
-    if (type === 'deduct') {
+    if (type === 'deduct' || type === 'beep') {
       // Pleasant double chirp: high tone then drop
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -379,7 +584,7 @@ export function playChime(type: 'deduct' | 'success' | 'alert' = 'deduct') {
 
       osc.start();
       osc.stop(ctx.currentTime + 0.2);
-    } else if (type === 'success') {
+    } else if (type === 'success' || type === 'chime') {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
@@ -411,5 +616,134 @@ export function playChime(type: 'deduct' | 'success' | 'alert' = 'deduct') {
     }
   } catch (e) {
     // AudioContext blocked or not supported, ignore silently
+  }
+}
+
+import { safeLocalStorage } from '../utils/safeStorage';
+
+// --- USER AUTHENTICATION CLIENT SERVICES ---
+const AUTH_TOKEN_KEY = 'purecotton_auth_token_v1';
+const AUTH_USER_KEY = 'purecotton_auth_user_v1';
+
+export const DEFAULT_PREVIEW_USER: AuthUser = {
+  id: 'usr-ashish-01',
+  username: 'admin',
+  name: 'Ashish Sattur',
+  email: 'ashish.sattur@gmail.com',
+  role: 'admin',
+};
+
+export function getStoredAuthToken(): string | null {
+  const explicitLogout = safeLocalStorage.getItem('purecotton_explicit_logout');
+  if (explicitLogout === 'true') {
+    return safeLocalStorage.getItem(AUTH_TOKEN_KEY);
+  }
+  const token = safeLocalStorage.getItem(AUTH_TOKEN_KEY);
+  return token || 'token_preview_active_session';
+}
+
+export function setStoredAuthToken(token: string): void {
+  safeLocalStorage.removeItem('purecotton_explicit_logout');
+  safeLocalStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function clearStoredAuthToken(): void {
+  safeLocalStorage.setItem('purecotton_explicit_logout', 'true');
+  safeLocalStorage.removeItem(AUTH_TOKEN_KEY);
+  safeLocalStorage.removeItem(AUTH_USER_KEY);
+}
+
+export function getStoredUser(): AuthUser | null {
+  const explicitLogout = safeLocalStorage.getItem('purecotton_explicit_logout');
+  if (explicitLogout === 'true') {
+    const raw = safeLocalStorage.getItem(AUTH_USER_KEY);
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch {}
+    }
+    return null;
+  }
+  const raw = safeLocalStorage.getItem(AUTH_USER_KEY);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {}
+  }
+  return DEFAULT_PREVIEW_USER;
+}
+
+export function setStoredUser(user: AuthUser): void {
+  safeLocalStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+}
+
+export async function apiLogin(username: string, password: string): Promise<{
+  success: boolean;
+  token?: string;
+  user?: AuthUser;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Authentication failed. Please check credentials.' };
+    }
+    setStoredAuthToken(data.token);
+    setStoredUser(data.user);
+    return { success: true, token: data.token, user: data.user };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Server connection failed. Check Wi-Fi.' };
+  }
+}
+
+export async function apiGetCurrentUser(token?: string): Promise<{
+  success: boolean;
+  user?: AuthUser;
+  error?: string;
+}> {
+  const activeToken = token || getStoredAuthToken();
+  if (!activeToken) return { success: false, error: 'No active session' };
+
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${activeToken}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.user) {
+        setStoredUser(data.user);
+        return { success: true, user: data.user };
+      }
+    }
+    clearStoredAuthToken();
+    return { success: false, error: 'Session expired' };
+  } catch (err: any) {
+    const stored = getStoredUser();
+    if (stored) return { success: true, user: stored };
+    return { success: false, error: 'Connection error' };
+  }
+}
+
+export async function apiLogout(): Promise<void> {
+  const token = getStoredAuthToken();
+  try {
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ token }),
+      });
+    }
+  } catch (e) {
+  } finally {
+    clearStoredAuthToken();
   }
 }

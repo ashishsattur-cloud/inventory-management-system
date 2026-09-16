@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Product, Supplier, ClothingCategory } from '../types';
 import { BarcodeTag } from './BarcodeTag';
 import {
@@ -17,8 +17,9 @@ import {
   TrendingDown,
   Layers,
   Sparkles,
-  Camera,
+  Smartphone,
   PlusCircle,
+  Camera,
   Trash2
 } from 'lucide-react';
 
@@ -27,11 +28,13 @@ interface InventoryTableProps {
   suppliers: Supplier[];
   onUpdateStock: (productId: string, newStock: number, reason: string) => void;
   onOpenAddModal: () => void;
-  onOpenScanner: () => void;
-  onOpenScannerWithMode?: (mode: 'deduct' | 'lookup' | 'add') => void;
+  laptopScanAction?: 'cart' | 'restock' | 'deduct';
+  onChangeLaptopScanAction?: (action: 'cart' | 'restock' | 'deduct') => void;
   onDeductStock?: (barcode: string) => Promise<any> | void;
   onDeleteProduct: (productId: string) => void;
   onOpenGenerateAndScan?: () => void;
+  onOpenScanner?: () => void;
+  onOpenScannerWithMode?: (mode: 'deduct' | 'lookup' | 'add') => void;
 }
 
 export const InventoryTable: React.FC<InventoryTableProps> = ({
@@ -39,11 +42,13 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   suppliers,
   onUpdateStock,
   onOpenAddModal,
-  onOpenScanner,
-  onOpenScannerWithMode,
+  laptopScanAction = 'cart',
+  onChangeLaptopScanAction,
   onDeductStock,
   onDeleteProduct,
   onOpenGenerateAndScan,
+  onOpenScanner,
+  onOpenScannerWithMode,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -57,15 +62,27 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
   const [confirmDeleteOutOfStock, setConfirmDeleteOutOfStock] = useState(false);
   const [inventoryNotification, setInventoryNotification] = useState<string | null>(null);
 
-  const categories = ['All', 'Saree', 'Salwar Suit', 'Kurti', 'Dupatta & Stole'];
+  // Close modals on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (activeBarcodeTag) setActiveBarcodeTag(null);
+        if (itemToDelete) setItemToDelete(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeBarcodeTag, itemToDelete]);
+
+  const categories = ['All', 'Saree', 'Salwar Suit', 'Kurti', 'Shirt', 'Dupatta & Stole', 'Fabric & Material'];
 
   const filteredProducts = products.filter((item) => {
     const matchesSearch =
-      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.barcode.includes(searchTerm) ||
-      item.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.fabricType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.color.toLowerCase().includes(searchTerm.toLowerCase());
+      (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.barcode || '').includes(searchTerm) ||
+      (item.sku || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.fabricType || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.color || '').toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
 
@@ -190,11 +207,13 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
             <button
               type="button"
               onClick={onOpenAddModal}
-              className="py-2 px-3.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition-all"
-              title="Directly add a new garment to inventory"
+              className="py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md flex items-center justify-center gap-2 transition-all border border-emerald-600"
+              title="Add a new garment/item to inventory"
             >
-              <Plus className="w-4 h-4" />
-              <span>+ Add New Garment</span>
+              <div className="w-5 h-5 rounded-full bg-emerald-600/60 flex items-center justify-center font-black text-xs">
+                +
+              </div>
+              <span>Add Garment / Item</span>
             </button>
             {onOpenGenerateAndScan && (
               <button
@@ -207,15 +226,48 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                 <span>Barcode Tag</span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('lookup') : onOpenScanner()}
-              className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs rounded-xl transition-all flex items-center gap-1.5"
-              title="Scan barcode to look up clothing item"
-            >
-              <BarcodeIcon className="w-3.5 h-3.5 text-slate-600" />
-              <span>Scan to Check</span>
-            </button>
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+              <span className="text-[11px] font-bold text-slate-500 px-1.5 flex items-center gap-1">
+                <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="hidden sm:inline">Mobile Scan:</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => onChangeLaptopScanAction?.('cart')}
+                className={`px-2 py-1 rounded-lg font-bold text-xs transition-all ${
+                  laptopScanAction === 'cart'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-slate-200'
+                }`}
+                title="When mobile device scans, add item to active POS cart"
+              >
+                🛒 Add to Cart
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeLaptopScanAction?.('restock')}
+                className={`px-2 py-1 rounded-lg font-bold text-xs transition-all ${
+                  laptopScanAction === 'restock'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-slate-200'
+                }`}
+                title="When mobile device scans, add +1 to stock"
+              >
+                ➕ Restock (+1)
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeLaptopScanAction?.('deduct')}
+                className={`px-2 py-1 rounded-lg font-bold text-xs transition-all ${
+                  laptopScanAction === 'deduct'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:bg-slate-200'
+                }`}
+                title="When mobile device scans, deduct -1 from stock"
+              >
+                ➖ Deduct (-1)
+              </button>
+            </div>
             {outOfStockCount > 0 && (
               <button
                 type="button"
@@ -284,6 +336,16 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               className="pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 w-52"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={onOpenAddModal}
+            className="py-1.5 px-3 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all shrink-0"
+            title="Add new product to inventory"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Add Item</span>
+          </button>
         </div>
       </div>
 
@@ -327,14 +389,16 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                             <span>Generate Barcode &amp; Scan to Add</span>
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={onOpenScanner}
-                          className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all"
-                        >
-                          <Camera className="w-4 h-4 text-emerald-400" />
-                          <span>Scan Existing Tag</span>
-                        </button>
+                        {onOpenScanner && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenScannerWithMode ? onOpenScannerWithMode('lookup') : onOpenScanner()}
+                            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all"
+                          >
+                            <Camera className="w-4 h-4 text-emerald-400" />
+                            <span>Scan Existing Tag</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -346,14 +410,15 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredProducts.map((p) => {
+                filteredProducts.map((p, pIdx) => {
                   const isLow = p.stock <= p.minStockAlert && p.stock > 0;
                   const isOut = p.stock <= 0;
                   const supplier = suppliers.find((s) => s.id === p.supplierId);
+                  const rowKey = p.id ? `inv-${p.id}-${pIdx}` : `inv-bar-${p.barcode || 'item'}-${pIdx}`;
 
                   return (
                     <tr
-                      key={p.id}
+                      key={rowKey}
                       className="hover:bg-slate-50/80 transition-colors group"
                     >
                       {/* Name & Category */}
@@ -627,11 +692,20 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
 
       {/* Barcode Tag Modal Preview */}
       {activeBarcodeTag && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-slate-200 relative">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 animate-in fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setActiveBarcodeTag(null);
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-slate-200 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               onClick={() => setActiveBarcodeTag(null)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-slate-700 p-1"
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              title="Close (Esc)"
             >
               <X className="w-5 h-5" />
             </button>
@@ -641,14 +715,27 @@ export const InventoryTable: React.FC<InventoryTableProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveBarcodeTag(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
               >
-                Close Tag
+                Close Tag &amp; Return
               </button>
             </div>
           </div>
         </div>
       )}
+      {/* Floating Action Button (FAB) for adding new item */}
+      <div className="fixed bottom-6 right-6 z-30 print:hidden">
+        <button
+          type="button"
+          onClick={onOpenAddModal}
+          className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white font-extrabold px-4 py-3 rounded-full shadow-2xl hover:shadow-emerald-900/30 transition-all border-2 border-emerald-500/40 group ring-4 ring-emerald-900/10"
+          title="Add New Garment / Item (+)"
+        >
+          <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform stroke-[2.5]" />
+          <span className="text-sm tracking-wide">Add Item</span>
+        </button>
+      </div>
     </div>
   );
 };
+

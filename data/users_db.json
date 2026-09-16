@@ -1,0 +1,22 @@
+[
+  {
+    "id": "usr-admin-1",
+    "username": "admin",
+    "email": "ashish.sattur@gmail.com",
+    "name": "Ashish Sattur (Admin)",
+    "role": "admin",
+    "salt": "pc_salt_ashish_admin_2026",
+    "passwordHash": "eb5d0f6af044afb26c03c60ed6c4580d6436fb718cac1f345a9108e14b4cd1b9fe3da1918690ba5b41e8a56fd1742630b15e7c7fa6cba8f2cb57734028d75d7d",
+    "createdAt": "2026-09-13T18:27:18.985Z"
+  },
+  {
+    "id": "usr-cashier-1",
+    "username": "cashier",
+    "email": "cashier@purecotton.com",
+    "name": "Store Counter Cashier",
+    "role": "cashier",
+    "salt": "pc_salt_staff_cashier_2026",
+    "passwordHash": "071721f45bcc65ef9d612ba7cfcdb3e754e08f4846de2574ee7b97ce1d39d33c8b2b17583af55b91b0cd801051d33a92b4866f391198649c27cca6390ac4375a",
+    "createdAt": "2026-09-13T18:27:18.986Z"
+  }
+]

@@ -1,0 +1,54 @@
+{
+  "approvedTokens": {
+    "token_pc_1789324530989_ddkqcaee": {
+      "id": "req-1789324429092-fjbx",
+      "deviceId": "pc-w4d8ntow-mu05kc89",
+      "stationName": "Counter Laptop 1",
+      "ipAddress": "2405:201:d02b:181a:7ea6:3514:e79d:fae5",
+      "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36",
+      "os": "Linux Workstation",
+      "browser": "Google Chrome",
+      "screenResolution": "434x965",
+      "status": "APPROVED",
+      "requestedAt": "14/9/2026, 12:03:49 am",
+      "targetEmail": "ashish.sattur@gmail.com",
+      "notificationSent": true,
+      "notificationTimestamp": "2026-09-13T18:33:49.092Z",
+      "notificationContent": "SECURITY ACCESS PERMISSION REQUEST:\n---------------------------------------------\nA PC computer is requesting permission to use the Pure Cotton POS & Inventory Software.\n\n• Machine/Station: Counter Laptop 1\n• Device ID: pc-w4d8ntow-mu05kc89\n• Client IP Address: 2405:201:d02b:181a:7ea6:3514:e79d:fae5\n• Operating System: Linux Workstation\n• Web Browser: Google Chrome\n• Screen Resolution: 434x965\n• Timestamp: 14/9/2026, 12:03:49 am\n• Target Approver: ashish.sattur@gmail.com\n\nACTION REQUIRED:\nTo grant permission for this computer, click YES in the Pure Cotton POS Security dialog or click the verification link:\nhttps://localhost:3000/api/security/approve-direct?id=req-1789324429092-fjbx\n---------------------------------------------",
+      "token": "token_pc_1789324530989_ddkqcaee",
+      "approvedAt": "14/9/2026, 12:05:30 am",
+      "approvedBy": "ashish.sattur@gmail.com"
+    }
+  },
+  "requests": [
+    {
+      "id": "req-1789324429092-fjbx",
+      "deviceId": "pc-w4d8ntow-mu05kc89",
+      "stationName": "Counter Laptop 1",
+      "ipAddress": "2405:201:d02b:181a:7ea6:3514:e79d:fae5",
+      "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36",
+      "os": "Linux Workstation",
+      "browser": "Google Chrome",
+      "screenResolution": "434x965",
+      "status": "APPROVED",
+      "requestedAt": "14/9/2026, 12:03:49 am",
+      "targetEmail": "ashish.sattur@gmail.com",
+      "notificationSent": true,
+      "notificationTimestamp": "2026-09-13T18:33:49.092Z",
+      "notificationContent": "SECURITY ACCESS PERMISSION REQUEST:\n---------------------------------------------\nA PC computer is requesting permission to use the Pure Cotton POS & Inventory Software.\n\n• Machine/Station: Counter Laptop 1\n• Device ID: pc-w4d8ntow-mu05kc89\n• Client IP Address: 2405:201:d02b:181a:7ea6:3514:e79d:fae5\n• Operating System: Linux Workstation\n• Web Browser: Google Chrome\n• Screen Resolution: 434x965\n• Timestamp: 14/9/2026, 12:03:49 am\n• Target Approver: ashish.sattur@gmail.com\n\nACTION REQUIRED:\nTo grant permission for this computer, click YES in the Pure Cotton POS Security dialog or click the verification link:\nhttps://localhost:3000/api/security/approve-direct?id=req-1789324429092-fjbx\n---------------------------------------------",
+      "token": "token_pc_1789324530989_ddkqcaee",
+      "approvedAt": "14/9/2026, 12:05:30 am",
+      "approvedBy": "ashish.sattur@gmail.com"
+    }
+  ],
+  "notificationsLog": [
+    {
+      "id": "notif-1789324429093",
+      "to": "ashish.sattur@gmail.com",
+      "subject": "[SECURITY] New PC Access Verification Request from IP: 2405:201:d02b:181a:7ea6:3514:e79d:fae5",
+      "body": "SECURITY ACCESS PERMISSION REQUEST:\n---------------------------------------------\nA PC computer is requesting permission to use the Pure Cotton POS & Inventory Software.\n\n• Machine/Station: Counter Laptop 1\n• Device ID: pc-w4d8ntow-mu05kc89\n• Client IP Address: 2405:201:d02b:181a:7ea6:3514:e79d:fae5\n• Operating System: Linux Workstation\n• Web Browser: Google Chrome\n• Screen Resolution: 434x965\n• Timestamp: 14/9/2026, 12:03:49 am\n• Target Approver: ashish.sattur@gmail.com\n\nACTION REQUIRED:\nTo grant permission for this computer, click YES in the Pure Cotton POS Security dialog or click the verification link:\nhttps://localhost:3000/api/security/approve-direct?id=req-1789324429092-fjbx\n---------------------------------------------",
+      "timestamp": "2026-09-13T18:33:49.093Z",
+      "status": "SENT"
+    }
+  ]
+}

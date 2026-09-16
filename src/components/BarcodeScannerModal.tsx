@@ -68,6 +68,17 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
   const lastScannedRef = useRef<{ barcode: string; time: number }>({ barcode: '', time: 0 });
 
+  // Keyboard Escape listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
+
   // When modal is opened, synchronize with initialMode without wiping subsequent user selections
   useEffect(() => {
     if (isOpen) {
@@ -155,7 +166,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     lastScannedRef.current = { barcode: trimmed, time: now };
 
     const matched = products.find(
-      (p) => p.barcode === trimmed || p.sku.toLowerCase() === trimmed.toLowerCase()
+      (p) => p.barcode === trimmed || (p.sku || '').toLowerCase() === trimmed.toLowerCase()
     );
 
     const activeMode = scanModeRef.current;
@@ -252,8 +263,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 my-2 max-h-[95vh] flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 my-2 max-h-[95vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header with prominent Back Button */}
         <div className="px-4 sm:px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 sm:gap-3">
@@ -489,14 +508,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             {products.length > 0 && (
               <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 <span className="text-[11px] font-bold text-slate-400">Click to Test:</span>
-                {products.slice(0, 4).map((p) => (
+                {products.slice(0, 4).map((p, pIdx) => (
                   <button
-                    key={p.id}
+                    key={p.id ? `test-btn-${p.id}-${pIdx}` : `test-btn-bar-${p.barcode || 'item'}-${pIdx}`}
                     type="button"
                     onClick={() => handleScannedCode(p.barcode)}
                     className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md font-mono text-[11px] transition-colors"
                   >
-                    {p.barcode} ({p.category.split(' ')[0]} - Stock: {p.stock})
+                    {p.barcode} ({((p.category || 'Cotton').split(' '))[0]} - Stock: {p.stock})
                   </button>
                 ))}
               </div>

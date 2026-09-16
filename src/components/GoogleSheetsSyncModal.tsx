@@ -18,6 +18,7 @@ import {
   updateInventorySheets,
   getGoogleSheetsAccessToken,
 } from '../services/googleSheets';
+import { safeLocalStorage } from '../utils/safeStorage';
 
 interface GoogleSheetsSyncModalProps {
   isOpen: boolean;
@@ -35,10 +36,10 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   suppliers,
 }) => {
   const [spreadsheetId, setSpreadsheetId] = useState(
-    localStorage.getItem('cotton_pos_sheet_id') || ''
+    safeLocalStorage.getItem('cotton_pos_sheet_id') || ''
   );
   const [spreadsheetUrl, setSpreadsheetUrl] = useState(
-    localStorage.getItem('cotton_pos_sheet_url') || ''
+    safeLocalStorage.getItem('cotton_pos_sheet_url') || ''
   );
   const [sheetTitle, setSheetTitle] = useState('Cotton Retail Store - Live Inventory & Sales');
   const [loading, setLoading] = useState(false);
@@ -55,8 +56,8 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       const res = await createInventorySpreadsheet(sheetTitle, products, sales, suppliers);
       setSpreadsheetId(res.spreadsheetId);
       setSpreadsheetUrl(res.spreadsheetUrl);
-      localStorage.setItem('cotton_pos_sheet_id', res.spreadsheetId);
-      localStorage.setItem('cotton_pos_sheet_url', res.spreadsheetUrl);
+      safeLocalStorage.setItem('cotton_pos_sheet_id', res.spreadsheetId);
+      safeLocalStorage.setItem('cotton_pos_sheet_url', res.spreadsheetUrl);
       setSuccessMsg('Successfully created and synchronized 3 automated tabs with Google Sheets!');
     } catch (err: any) {
       setErrorMsg(err.message || 'Error creating Google Sheet. Check permissions.');
@@ -85,8 +86,8 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       await updateInventorySheets(cleanId, products, sales, suppliers);
       const url = `https://docs.google.com/spreadsheets/d/${cleanId}`;
       setSpreadsheetUrl(url);
-      localStorage.setItem('cotton_pos_sheet_id', cleanId);
-      localStorage.setItem('cotton_pos_sheet_url', url);
+      safeLocalStorage.setItem('cotton_pos_sheet_id', cleanId);
+      safeLocalStorage.setItem('cotton_pos_sheet_url', url);
       setSuccessMsg(`Successfully synced live stock (${products.length} styles) and monthly sales logs!`);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error updating spreadsheet. Make sure your account has edit permissions.');

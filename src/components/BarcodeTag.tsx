@@ -40,14 +40,15 @@ export const BarcodeTag: React.FC<BarcodeGeneratorProps> = ({ product, onPrint, 
   };
 
   const handlePrintSingle = () => {
-    const printWindow = window.open('', '_blank', 'width=450,height=550');
-    if (!printWindow) {
-      alert('Please allow popups to print barcode labels.');
-      return;
-    }
+    try {
+      const printWindow = window.open('', '_blank', 'width=450,height=550');
+      if (!printWindow) {
+        window.print();
+        return;
+      }
 
-    const svgHtml = svgRef.current ? svgRef.current.outerHTML : '';
-    printWindow.document.write(`
+      const svgHtml = svgRef.current ? svgRef.current.outerHTML : '';
+      printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
@@ -120,18 +121,18 @@ export const BarcodeTag: React.FC<BarcodeGeneratorProps> = ({ product, onPrint, 
         <body>
           <div class="label-card">
             <div class="brand-name">Pure Cotton Heritage POS</div>
-            <div class="item-title">${product.name}</div>
+            <div class="item-title">${product.name || 'Pure Cotton Garment'}</div>
             <div class="attributes">
-              <span><strong>${product.category}</strong></span>
+              <span><strong>${product.category || 'Cotton'}</strong></span>
               <span>•</span>
-              <span>${product.size}</span>
+              <span>${product.size || 'Free Size'}</span>
               <span>•</span>
-              <span>${product.fabricType.split(' ')[0]}</span>
+              <span>${((product.fabricType || 'Pure Cotton').split(' '))[0]}</span>
             </div>
             <div style="display:flex; justify-content:center; margin: 4px 0;">
               ${svgHtml}
             </div>
-            <div class="price-tag">MRP: ₹${product.sellingPrice.toLocaleString()}</div>
+            <div class="price-tag">MRP: ₹${(product.sellingPrice || 0).toLocaleString()}</div>
             <div class="rack">${product.rackLocation || 'Bay 1'} | SKU: ${product.sku}</div>
           </div>
           <script>
@@ -144,7 +145,11 @@ export const BarcodeTag: React.FC<BarcodeGeneratorProps> = ({ product, onPrint, 
       </html>
     `);
     printWindow.document.close();
-  };
+  } catch (e) {
+    console.warn('Print window failed or popup blocked, using window.print', e);
+    window.print();
+  }
+};
 
   return (
     <div id={`barcode-tag-${product.id}`} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col items-center">

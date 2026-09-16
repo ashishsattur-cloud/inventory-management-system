@@ -10,6 +10,7 @@ export const CATEGORY_MAP: Record<ClothingCategory, CategoryInfo> = {
   'Saree': { code: '10', prefix: 'SAR', name: 'Saree' },
   'Salwar Suit': { code: '20', prefix: 'SLW', name: 'Salwar Suit' },
   'Kurti': { code: '30', prefix: 'KRT', name: 'Kurti' },
+  'Shirt': { code: '35', prefix: 'SHR', name: 'Shirt' },
   'Dupatta & Stole': { code: '40', prefix: 'DUP', name: 'Dupatta & Stole' },
   'Fabric & Material': { code: '50', prefix: 'FAB', name: 'Fabric & Material' },
 };
@@ -32,7 +33,9 @@ export function detectCategoryFromBarcode(barcode: string): ClothingCategory | n
   if (clean.startsWith('10')) return 'Saree';
   if (clean.startsWith('20')) return 'Salwar Suit';
   if (clean.startsWith('30')) return 'Kurti';
+  if (clean.startsWith('35')) return 'Shirt';
   if (clean.startsWith('40')) return 'Dupatta & Stole';
+  if (clean.startsWith('50')) return 'Fabric & Material';
   return null;
 }
 
@@ -61,9 +64,17 @@ export function parseStructuredBarcode(barcode: string): {
     categoryCode = '30';
     categoryName = 'Kurti';
     itemId = clean.slice(2);
+  } else if (clean.startsWith('35')) {
+    categoryCode = '35';
+    categoryName = 'Shirt';
+    itemId = clean.slice(2);
   } else if (clean.startsWith('40')) {
     categoryCode = '40';
     categoryName = 'Dupatta & Stole';
+    itemId = clean.slice(2);
+  } else if (clean.startsWith('50')) {
+    categoryCode = '50';
+    categoryName = 'Fabric & Material';
     itemId = clean.slice(2);
   }
 

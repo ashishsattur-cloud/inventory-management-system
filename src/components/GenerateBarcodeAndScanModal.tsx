@@ -94,6 +94,38 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
     return `${info.prefix}-${info.code}-${idStr}`;
   };
 
+  // Safe close handler that cleans up camera streams without DOM errors
+  const handleSafeClose = async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.clear();
+      } catch (e) {
+        console.warn('Error clearing scanner on close:', e);
+      }
+      scannerRef.current = null;
+    }
+    const videoElem = document.querySelector('#generate-scan-reader-region video') as HTMLVideoElement | null;
+    if (videoElem && videoElem.srcObject) {
+      try {
+        const stream = videoElem.srcObject as MediaStream;
+        stream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+    }
+    setIsCameraActive(false);
+    onClose();
+  };
+
+  // Keyboard Escape listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        handleSafeClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
+
   // On open, reset and generate barcode for current category
   useEffect(() => {
     if (isOpen) {
@@ -235,12 +267,16 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
     setIsCameraActive(false);
   };
 
-  // Printable tag action
+  // Printable tag action with popup blocker fallback
   const handlePrintLabel = () => {
-    const printWindow = window.open('', '_blank', 'width=450,height=550');
-    if (!printWindow) return;
+    try {
+      const printWindow = window.open('', '_blank', 'width=450,height=550');
+      if (!printWindow) {
+        window.print();
+        return;
+      }
 
-    printWindow.document.write(`
+      printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
@@ -342,7 +378,11 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
         </body>
       </html>
     `);
-    printWindow.document.close();
+      printWindow.document.close();
+    } catch (e) {
+      console.warn('Popup print blocked or failed, falling back to window.print', e);
+      window.print();
+    }
   };
 
   const handleManualScanSubmit = (e: React.FormEvent) => {
@@ -386,42 +426,50 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 my-6">
-        {/* Top Header */}
-        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            {step === 'enter_details' ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto animate-in fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleSafeClose();
+        }
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 my-auto flex flex-col max-h-[94vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Sticky Top Header */}
+        <div className="sticky top-0 z-20 px-4 sm:px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0 shadow-sm">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={handleSafeClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-white rounded-xl text-xs font-bold transition-all border border-slate-700 shadow-xs"
+              title="Return to store screen (Esc)"
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-400" />
+              <span>← Back to Store</span>
+            </button>
+            {step === 'enter_details' && (
               <button
                 type="button"
                 onClick={() => setStep('generate_and_scan')}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
-                title="Back to barcode scan"
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition-all border border-slate-700"
+                title="Back to barcode generator step"
               >
-                <ArrowLeft className="w-4 h-4 text-emerald-400" />
-                <span>← Back</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
-                title="Back to counter"
-              >
-                <ArrowLeft className="w-4 h-4 text-emerald-400" />
-                <span>← Back</span>
+                <span>Back to Tag</span>
               </button>
             )}
-            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 hidden sm:block">
-              <BarcodeIcon className="w-5 h-5" />
+            <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 hidden sm:block">
+              <BarcodeIcon className="w-4 h-4" />
             </div>
-            <div>
-              <h3 className="font-semibold text-sm sm:text-base text-slate-50">
+            <div className="hidden sm:block">
+              <h3 className="font-bold text-sm text-slate-50 leading-tight">
                 {step === 'generate_and_scan'
-                  ? 'Generate Barcode Tag'
+                  ? 'Generate Barcode Sticker Tag'
                   : 'Enter Clothing Item Details'}
               </h3>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
+              <p className="text-[11px] text-slate-400">
                 {step === 'generate_and_scan'
                   ? 'Print tag or scan with camera to add directly to store'
                   : `Scanned Barcode: ${verifiedBarcode || generatedBarcode}`}
@@ -430,13 +478,17 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
           </div>
 
           <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1.5 rounded-lg transition-colors"
-            title="Close"
+            type="button"
+            onClick={handleSafeClose}
+            className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-colors"
+            title="Close (Esc)"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Scrollable Modal Content */}
+        <div className="flex-1 overflow-y-auto">
 
         {/* Workflow Step 1: Generate Barcode & Scan It */}
         {step === 'generate_and_scan' && (
@@ -602,13 +654,23 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
               </button>
             </form>
 
-            <div className="pt-2 border-t border-slate-100 flex justify-end">
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors"
+                onClick={handleSafeClose}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors flex items-center gap-1.5 border border-slate-200"
               >
-                ← Cancel &amp; Back to Shop Counter
+                <ArrowLeft className="w-4 h-4 text-slate-500" />
+                <span>← Cancel &amp; Back to Store</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleBarcodeScannedSuccessfully(generatedBarcode)}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md flex items-center gap-2 transition-all transform hover:scale-[1.02]"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Enter Details for this Tag →</span>
               </button>
             </div>
           </div>
@@ -780,17 +842,26 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
               </div>
             </div>
 
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setStep('generate_and_scan')}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
-              >
-                Back to Barcode
-              </button>
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSafeClose}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200"
+                >
+                  ← Cancel &amp; Exit to Store
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep('generate_and_scan')}
+                  className="px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
+                >
+                  Back to Tag
+                </button>
+              </div>
               <button
                 type="submit"
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5 transition-all"
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5 transition-all"
               >
                 <Plus className="w-4 h-4" />
                 <span>Save Garment to Inventory</span>
@@ -798,6 +869,7 @@ export const GenerateBarcodeAndScanModal: React.FC<GenerateBarcodeAndScanModalPr
             </div>
           </form>
         )}
+        </div>
       </div>
     </div>
   );

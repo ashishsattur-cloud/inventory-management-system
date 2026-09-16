@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Product, Supplier, SaleTransaction, CartItem } from './types';
+import { Product, Supplier, SaleTransaction, CartItem, normalizeProduct, AuthUser } from './types';
 import { PosTerminal } from './components/PosTerminal';
 import { InventoryTable } from './components/InventoryTable';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
@@ -10,6 +10,9 @@ import { AddProductModal } from './components/AddProductModal';
 import { GenerateBarcodeAndScanModal } from './components/GenerateBarcodeAndScanModal';
 import { GoogleSheetsSyncModal } from './components/GoogleSheetsSyncModal';
 import { MobileScannerView } from './components/MobileScannerView';
+import { PcSecurityGate } from './components/PcSecurityGate';
+import { SecurityManagerModal } from './components/SecurityManagerModal';
+import { LoginPage } from './components/LoginPage';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -24,7 +27,10 @@ import {
   MinusCircle,
   PlusCircle,
   Radio,
-  Smartphone
+  Smartphone,
+  ShieldCheck,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 import {
   fetchServerInventory,
@@ -34,8 +40,13 @@ import {
   apiRecordSale,
   apiScanBarcode,
   subscribeToLiveSync,
-  playChime
+  playChime,
+  apiGetCurrentUser,
+  apiLogout,
+  getStoredAuthToken,
+  getStoredUser
 } from './services/api';
+import { safeLocalStorage, safeSessionStorage } from './utils/safeStorage';
 
 export default function App() {
   // Navigation tabs
@@ -44,8 +55,8 @@ export default function App() {
   // Core Data State - clean start: only items added to system exist
   const [products, setProducts] = useState<Product[]>(() => {
     try {
-      const saved = localStorage.getItem('cotton_retail_user_products_v5');
-      return saved ? JSON.parse(saved) : [];
+      const saved = safeLocalStorage.getItem('cotton_retail_user_products_v5');
+      return saved ? JSON.parse(saved).map(normalizeProduct) : [];
     } catch {
       return [];
     }
@@ -53,7 +64,7 @@ export default function App() {
 
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     try {
-      const saved = localStorage.getItem('cotton_retail_user_suppliers_v5');
+      const saved = safeLocalStorage.getItem('cotton_retail_user_suppliers_v5');
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -62,7 +73,7 @@ export default function App() {
 
   const [sales, setSales] = useState<SaleTransaction[]>(() => {
     try {
-      const saved = localStorage.getItem('cotton_retail_user_sales_v5');
+      const saved = safeLocalStorage.getItem('cotton_retail_user_sales_v5');
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -72,8 +83,15 @@ export default function App() {
   // Centralized active counter bill state
   const [posCart, setPosCart] = useState<CartItem[]>(() => {
     try {
-      const saved = localStorage.getItem('cotton_retail_active_cart');
-      return saved ? JSON.parse(saved) : [];
+      const saved = safeLocalStorage.getItem('cotton_retail_active_cart');
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed)
+        ? parsed.map((item: any) => ({
+            ...item,
+            product: normalizeProduct(item.product),
+          }))
+        : [];
     } catch {
       return [];
     }
@@ -81,7 +99,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('cotton_retail_active_cart', JSON.stringify(posCart));
+      safeLocalStorage.setItem('cotton_retail_active_cart', JSON.stringify(posCart));
     } catch (e) {
       console.warn(e);
     }
@@ -101,42 +119,144 @@ export default function App() {
   const [isGenerateAndScanOpen, setIsGenerateAndScanOpen] = useState(false);
   const [isGoogleSyncOpen, setIsGoogleSyncOpen] = useState(false);
   const [initialAddBarcode, setInitialAddBarcode] = useState('');
-  const [scanNotification, setScanNotification] = useState<{ message: string; type?: 'deduct' | 'info' | 'success' } | null>(null);
+  const [scanNotification, setScanNotification] = useState<{ message: string; type?: 'deduct' | 'info' | 'success' | 'alert' } | null>(null);
+
+  // User Authentication / Login State
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getStoredUser());
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getStoredAuthToken()));
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+
+  // Validate session with server on startup
+  useEffect(() => {
+    let active = true;
+    async function verifySession() {
+      const token = getStoredAuthToken();
+      if (!token) {
+        if (active) {
+          setIsAuthenticated(false);
+          setCurrentUser(null);
+          setIsAuthChecking(false);
+        }
+        return;
+      }
+      try {
+        const res = await apiGetCurrentUser(token);
+        if (active) {
+          if (res.success && res.user) {
+            setCurrentUser(res.user);
+            setIsAuthenticated(true);
+          } else {
+            setIsAuthenticated(false);
+            setCurrentUser(null);
+          }
+        }
+      } catch (e) {
+        if (active) {
+          const stored = getStoredUser();
+          if (stored) {
+            setCurrentUser(stored);
+            setIsAuthenticated(true);
+          } else {
+            setIsAuthenticated(false);
+          }
+        }
+      } finally {
+        if (active) setIsAuthChecking(false);
+      }
+    }
+    verifySession();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleLoginSuccess = (user: AuthUser, _token: string) => {
+    safeLocalStorage.removeItem('purecotton_explicit_logout');
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = async () => {
+    safeLocalStorage.setItem('purecotton_explicit_logout', 'true');
+    await apiLogout();
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+  };
+
+  // PC Security Authorization Gate State (Verification strictly for PC software, mobile scanner gun exempt)
+  const [isPcAuthorized, setIsPcAuthorized] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const explicitLocked = safeLocalStorage.getItem('purecotton_explicit_pc_lock');
+      if (explicitLocked === 'true') {
+        return Boolean(safeLocalStorage.getItem('purecotton_pc_auth_token'));
+      }
+      const existing = safeLocalStorage.getItem('purecotton_pc_auth_token');
+      if (!existing) {
+        safeLocalStorage.setItem('purecotton_pc_auth_token', 'token_pc_preview_authorized');
+        return true;
+      }
+      return true;
+    }
+    return true;
+  });
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+
+  // Mobile scan action mode on Laptop: 'cart' | 'restock' | 'deduct'
+  const [laptopScanAction, setLaptopScanAction] = useState<'cart' | 'restock' | 'deduct'>('cart');
+  const laptopScanActionRef = useRef<'cart' | 'restock' | 'deduct'>('cart');
+  useEffect(() => {
+    laptopScanActionRef.current = laptopScanAction;
+  }, [laptopScanAction]);
+
+  const [mobileScanEvent, setMobileScanEvent] = useState<{ barcode: string; timestamp: number } | null>(null);
+
+  const isAddProductOpenRef = useRef(false);
+  useEffect(() => {
+    isAddProductOpenRef.current = isAddProductOpen;
+  }, [isAddProductOpen]);
 
   // Dedicated Mobile Scanner mode (User: "make the mobile only for scaning. don't remove add item button for scanning.")
   const [isMobileScannerMode, setIsMobileScannerMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('mode') === 'scanner') return true;
-      if (window.innerWidth < 768) return true;
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('mode') === 'scanner') return true;
+        return false;
+      } catch (e) {
+        return false;
+      }
     }
     return false;
   });
 
   // Ref to always access latest handleAddToCart without stale closures
   const handleAddToCartRef = useRef<((product: Product) => void) | null>(null);
+  const handleDeductStockRef = useRef<((barcode: string) => Promise<any> | void) | null>(null);
+  const handleIncrementStockRef = useRef<((barcode: string) => Promise<any> | void) | null>(null);
 
   // Auto-open scanner if mobile device opened with ?mode=scanner
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('mode') === 'scanner') {
-        setIsMobileScannerMode(true);
-      }
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('mode') === 'scanner') {
+          setIsMobileScannerMode(true);
+        }
+      } catch (e) {}
     }
   }, []);
 
   // Sync state to local storage as fallback
   useEffect(() => {
-    localStorage.setItem('cotton_retail_user_products_v5', JSON.stringify(products));
+    safeLocalStorage.setItem('cotton_retail_user_products_v5', JSON.stringify(products));
   }, [products]);
 
   useEffect(() => {
-    localStorage.setItem('cotton_retail_user_suppliers_v5', JSON.stringify(suppliers));
+    safeLocalStorage.setItem('cotton_retail_user_suppliers_v5', JSON.stringify(suppliers));
   }, [suppliers]);
 
   useEffect(() => {
-    localStorage.setItem('cotton_retail_user_sales_v5', JSON.stringify(sales));
+    safeLocalStorage.setItem('cotton_retail_user_sales_v5', JSON.stringify(sales));
   }, [sales]);
 
   // Initial fetch from central backend server
@@ -147,7 +267,7 @@ export default function App() {
       const data = await fetchServerInventory();
       if (!mounted) return;
       if (data && data.products) {
-        setProducts(data.products);
+        setProducts(data.products.map(normalizeProduct));
         setSuppliers(data.suppliers || []);
         setSales(data.sales || []);
       }
@@ -159,7 +279,7 @@ export default function App() {
     const unsubscribe = subscribeToLiveSync({
       onCatalogUpdate: (data) => {
         if (!mounted) return;
-        setProducts(data.products || []);
+        setProducts(Array.isArray(data.products) ? data.products.map(normalizeProduct) : []);
         if (data.suppliers) setSuppliers(data.suppliers);
         if (data.sales) setSales(data.sales);
       },
@@ -231,6 +351,64 @@ export default function App() {
         if (!mounted) return;
         setSyncStatus(status);
       },
+      onSecurityApproved: (data) => {
+        if (!mounted) return;
+        const myDevId = safeLocalStorage.getItem('purecotton_pc_device_id');
+        if (myDevId && data.deviceId === myDevId) {
+          safeLocalStorage.removeItem('purecotton_explicit_pc_lock');
+          safeLocalStorage.setItem('purecotton_pc_auth_token', data.token);
+          setIsPcAuthorized(true);
+          setScanNotification({
+            message: '🛡️ [Security] This PC was approved by Ashish Sattur!',
+            type: 'success',
+          });
+          setTimeout(() => setScanNotification(null), 5000);
+        }
+      },
+      onSecurityRejected: (data) => {
+        if (!mounted) return;
+        const myDevId = safeLocalStorage.getItem('purecotton_pc_device_id');
+        if (myDevId && data.deviceId === myDevId) {
+          safeLocalStorage.removeItem('purecotton_pc_auth_token');
+          safeLocalStorage.setItem('purecotton_explicit_pc_lock', 'true');
+          setIsPcAuthorized(false);
+        }
+      },
+      onBarcodeScanned: (data) => {
+        if (!mounted) return;
+        setMobileScanEvent({ barcode: data.barcode, timestamp: data.timestamp || Date.now() });
+
+        // If Add Product modal is open, the modal auto-fills the field
+        if (isAddProductOpenRef.current) {
+          playChime('chime');
+          return;
+        }
+
+        const action = laptopScanActionRef.current;
+        if (action === 'cart') {
+          if (data.product && handleAddToCartRef.current) {
+            playChime('success');
+            handleAddToCartRef.current(data.product);
+            setScanNotification({
+              message: `🛒 [${data.deviceName || 'Mobile Scanner'}] Added "${data.product.name}" to Active Bill!`,
+              type: 'success',
+            });
+            setTimeout(() => setScanNotification(null), 4000);
+            setActiveTab('pos');
+          } else if (!data.product) {
+            playChime('alert');
+            setScanNotification({
+              message: `⚠️ Scanned barcode "${data.barcode}" not found in catalog. Click "Add Product" to register it.`,
+              type: 'alert',
+            });
+            setTimeout(() => setScanNotification(null), 5000);
+          }
+        } else if (action === 'deduct') {
+          handleDeductStockRef.current?.(data.barcode);
+        } else if (action === 'restock') {
+          handleIncrementStockRef.current?.(data.barcode);
+        }
+      },
     });
 
     return () => {
@@ -246,7 +424,7 @@ export default function App() {
     let matchedItem: Product | undefined;
     setProducts((prev) =>
       prev.map((p) => {
-        if (p.barcode === trimmed || p.sku.toLowerCase() === trimmed.toLowerCase()) {
+        if (p.barcode === trimmed || (p.sku || '').toLowerCase() === trimmed.toLowerCase()) {
           matchedItem = p;
           const updatedStock = Math.max(0, p.stock - 1);
           return { ...p, stock: updatedStock };
@@ -287,7 +465,7 @@ export default function App() {
     let matchedItem: Product | undefined;
     setProducts((prev) =>
       prev.map((p) => {
-        if (p.barcode === trimmed || p.sku.toLowerCase() === trimmed.toLowerCase()) {
+        if (p.barcode === trimmed || (p.sku || '').toLowerCase() === trimmed.toLowerCase()) {
           matchedItem = p;
           return { ...p, stock: p.stock + 1 };
         }
@@ -313,6 +491,9 @@ export default function App() {
     }
     setTimeout(() => setScanNotification(null), 3500);
   }, []);
+
+  handleDeductStockRef.current = handleDeductStock;
+  handleIncrementStockRef.current = handleIncrementStock;
 
   // Cart operations for Counter Billing
   const handleAddToCart = useCallback((product: Product) => {
@@ -496,13 +677,47 @@ export default function App() {
 
   const lowStockCount = products.filter((p) => p.stock <= p.minStockAlert).length;
 
-  // Dedicated handheld mobile barcode gun mode
+  // Dedicated handheld mobile barcode gun mode (Exempt from PC verification per user request)
   if (isMobileScannerMode) {
     return (
       <MobileScannerView
-        products={products}
         serverConnected={syncStatus.connected}
-        onExitScannerView={() => setIsMobileScannerMode(false)}
+        onExitScannerView={() => {
+          safeSessionStorage.setItem('user_exited_mobile_scanner', 'true');
+          setIsMobileScannerMode(false);
+        }}
+      />
+    );
+  }
+
+  // 1. Session check loading screen
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 text-white">
+        <div className="w-14 h-14 rounded-2xl bg-emerald-600 flex items-center justify-center text-3xl shadow-xl mb-4 animate-pulse">
+          🌿
+        </div>
+        <p className="text-sm font-bold text-emerald-300">Verifying Pure Cotton POS session...</p>
+      </div>
+    );
+  }
+
+  // 2. Primary Authentication Gate - All inventory, billing, and stock protected behind Login
+  if (!isAuthenticated) {
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // PC Security Authorization Gate:
+  // "also add security where anyone cannot use it but only the people we grant permission can use it.
+  // for verification send notification to "ashish.sattur@gmail.com". and also send the IP address and other information.
+  // and if i press yes it is used. the verification only should be for PC software. not for the mobile gun."
+  if (!isPcAuthorized) {
+    return (
+      <PcSecurityGate
+        onApproved={() => {
+          setIsPcAuthorized(true);
+        }}
+        onSwitchToMobileGun={() => setIsMobileScannerMode(true)}
       />
     );
   }
@@ -550,6 +765,17 @@ export default function App() {
 
             {/* Quick Action Buttons on Header */}
             <div className="flex items-center gap-2">
+              {/* Security & Access Management for PC devices */}
+              <button
+                type="button"
+                onClick={() => setIsSecurityModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-amber-300 rounded-xl shadow-xs transition-all border border-amber-500/30"
+                title="Manage authorized PC devices, permissions, and IP logs"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden md:inline">Security</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setIsMobileScannerMode(true)}
@@ -618,6 +844,30 @@ export default function App() {
                 <Camera className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="hidden sm:inline">Camera Scan</span>
               </button>
+
+              {/* Authenticated User Status & Logout */}
+              {currentUser && (
+                <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                  <div className="hidden lg:flex flex-col text-right">
+                    <span className="text-xs font-bold text-slate-800 leading-tight flex items-center gap-1 justify-end">
+                      <UserIcon className="w-3 h-3 text-emerald-600" />
+                      <span>{currentUser.name}</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500 capitalize">
+                      {currentUser.role}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl shadow-2xs transition-all"
+                    title="Sign out of POS session"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-red-600" />
+                    <span className="hidden sm:inline">Logout</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -740,6 +990,8 @@ export default function App() {
             onRemoveFromCart={handleRemoveFromCart}
             onClearCart={handleClearCart}
             onCompleteSale={handleCompleteSale}
+            laptopScanAction={laptopScanAction}
+            onChangeLaptopScanAction={setLaptopScanAction}
             onOpenScanner={() => handleOpenScannerWithMode('lookup')}
             onOpenScannerWithMode={handleOpenScannerWithMode}
             onDeductStock={handleDeductStock}
@@ -758,6 +1010,8 @@ export default function App() {
             products={products}
             suppliers={suppliers}
             onUpdateStock={handleUpdateStock}
+            laptopScanAction={laptopScanAction}
+            onChangeLaptopScanAction={setLaptopScanAction}
             onOpenAddModal={() => {
               setInitialAddBarcode('');
               setIsAddProductOpen(true);
@@ -831,6 +1085,7 @@ export default function App() {
         onAddProduct={handleAddProduct}
         existingProducts={products}
         initialBarcode={initialAddBarcode}
+        mobileScanEvent={mobileScanEvent}
         onOpenScanner={() => handleOpenScannerWithMode('lookup')}
       />
 
@@ -841,6 +1096,18 @@ export default function App() {
         products={products}
         sales={sales}
         suppliers={suppliers}
+      />
+
+      {/* Security Manager Modal (Ashish Sattur's PC Permission & IP Logs Console) */}
+      <SecurityManagerModal
+        isOpen={isSecurityModalOpen}
+        onClose={() => setIsSecurityModalOpen(false)}
+        currentDeviceId={typeof window !== 'undefined' ? safeLocalStorage.getItem('purecotton_pc_device_id') || undefined : undefined}
+        onCurrentDeviceRevoked={() => {
+          safeLocalStorage.removeItem('purecotton_pc_auth_token');
+          safeLocalStorage.setItem('purecotton_explicit_pc_lock', 'true');
+          setIsPcAuthorized(false);
+        }}
       />
     </div>
   );
