@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AuthUser } from '../types';
 import { apiLogin } from '../services/api';
-import { Lock, User, Eye, EyeOff, ShieldCheck, ArrowRight, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, ShieldCheck, ArrowRight, Sparkles, CheckCircle2, AlertCircle, Smartphone } from 'lucide-react';
 
 interface LoginPageProps {
   onLoginSuccess: (user: AuthUser, token: string) => void;
@@ -247,6 +247,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </div>
                 <div className="text-[10px] text-slate-500 mt-0.5">Counter Billing</div>
               </button>
+            </div>
+
+            {/* Direct Mobile Barcode Gun Launcher */}
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <a
+                href={`${typeof window !== 'undefined' ? window.location.origin : ''}?mode=scanner`}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs"
+              >
+                <Smartphone className="w-4 h-4 text-emerald-400" />
+                <span>📱 Open Mobile Barcode Gun (No Login Needed)</span>
+              </a>
+              <p className="text-[10px] text-slate-400 text-center mt-1">
+                Floor staff can scan tags directly without entering PC credentials
+              </p>
             </div>
           </div>
         </div>

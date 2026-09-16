@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import os from 'os';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
@@ -269,6 +270,31 @@ function getClientIp(req: express.Request): string {
 // Real-Time SSE (Server-Sent Events) clients registry
 const sseClients = new Set<express.Response>();
 
+interface SseClientInfo {
+  res: express.Response;
+  role: 'laptop' | 'mobile_gun' | 'unknown';
+  ip: string;
+  connectedAt: number;
+}
+const sseClientsMap = new Map<express.Response, SseClientInfo>();
+
+export function getSyncStats() {
+  let mobileGunsCount = 0;
+  let laptopsCount = 0;
+  for (const info of sseClientsMap.values()) {
+    if (info.role === 'mobile_gun') mobileGunsCount++;
+    else if (info.role === 'laptop') laptopsCount++;
+  }
+  return {
+    totalDevices: sseClients.size,
+    connectedDevices: Math.max(1, sseClients.size),
+    mobileGunsCount,
+    laptopsCount,
+    hasActiveMobileGun: mobileGunsCount > 0,
+    hasActiveLaptop: laptopsCount > 0,
+  };
+}
+
 interface LiveSyncEvent {
   id: string;
   type:
@@ -280,7 +306,9 @@ interface LiveSyncEvent {
     | 'CATALOG_UPDATED'
     | 'SECURITY_REQUEST_CREATED'
     | 'SECURITY_DEVICE_APPROVED'
-    | 'SECURITY_DEVICE_REJECTED';
+    | 'SECURITY_DEVICE_REJECTED'
+    | 'DEVICE_SYNC_UPDATE'
+    | 'MOBILE_GUN_PING';
   data: any;
   timestamp: number;
 }
@@ -293,8 +321,13 @@ function broadcast(event: string, data: any) {
       client.write(payload);
     } catch (e) {
       sseClients.delete(client);
+      sseClientsMap.delete(client);
     }
   }
+}
+
+function broadcastSyncStats() {
+  broadcast('DEVICE_SYNC_UPDATE', getSyncStats());
 }
 
 function emitEvent(type: LiveSyncEvent['type'], data: any) {
@@ -311,16 +344,17 @@ function emitEvent(type: LiveSyncEvent['type'], data: any) {
   broadcast(type, data);
 }
 
-// Keep-alive heartbeat every 15 seconds to keep mobile connections alive
+// Keep-alive heartbeat every 10 seconds to keep mobile connections alive
 setInterval(() => {
   for (const client of sseClients) {
     try {
       client.write(': ping\n\n');
     } catch (e) {
       sseClients.delete(client);
+      sseClientsMap.delete(client);
     }
   }
-}, 15000);
+}, 10000);
 
 // --- API ROUTES ---
 
@@ -450,20 +484,60 @@ app.get('/api/auth/demo-accounts', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    connectedDevices: Math.max(1, sseClients.size),
+    ...getSyncStats(),
     productsCount: store.products.length,
     serverTime: Date.now(),
   });
 });
 
+// Network & Connection Info for Mobile Gun Pairing
+app.get('/api/network-info', (req, res) => {
+  const interfaces = os.networkInterfaces();
+  const lanIps: string[] = [];
+
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        lanIps.push(iface.address);
+      }
+    }
+  }
+
+  const hostHeader = req.headers.host || '';
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const currentOrigin = `${proto}://${hostHeader}`;
+
+  res.json({
+    lanIps,
+    port: PORT,
+    currentOrigin,
+    publicCloudUrl: 'https://ais-pre-r2peuv22umtyobjxuhb5l4-74331851214.asia-southeast1.run.app',
+    ...getSyncStats(),
+  });
+});
+
+// Mobile Gun Ping / Handshake
+app.post('/api/gun-ping', (req, res) => {
+  const { deviceName = 'Mobile Barcode Gun', action = 'heartbeat' } = req.body || {};
+  const pingPayload = {
+    deviceName,
+    action,
+    timestamp: Date.now(),
+    timeStr: new Date().toLocaleTimeString(),
+  };
+  emitEvent('MOBILE_GUN_PING', pingPayload);
+  res.json({ success: true, ...getSyncStats(), serverTime: Date.now() });
+});
+
 // Real-time scan events log for robust polling fallback
 app.get('/api/scan-events', (req, res) => {
   const since = Number(req.query.since) || 0;
+  const role = req.query.role as string | undefined;
   const events = recentEvents.filter((e) => e.timestamp > since);
   res.json({
     events,
     serverTime: Date.now(),
-    connectedDevices: Math.max(1, sseClients.size),
+    ...getSyncStats(),
   });
 });
 
@@ -475,18 +549,34 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
+  const roleParam = (req.query.role as string) || '';
+  const role = roleParam === 'mobile_gun' ? 'mobile_gun' : (roleParam === 'laptop' ? 'laptop' : 'unknown');
+
+  const clientInfo: SseClientInfo = {
+    res,
+    role,
+    ip: getClientIp(req),
+    connectedAt: Date.now(),
+  };
+
   sseClients.add(res);
+  sseClientsMap.set(res, clientInfo);
 
   // Send initial state upon connection
   res.write(
     `event: INIT\ndata: ${JSON.stringify({
-      connectedDevices: Math.max(1, sseClients.size),
+      ...getSyncStats(),
       store,
     })}\n\n`
   );
 
+  // Broadcast sync count update to all other devices immediately
+  broadcastSyncStats();
+
   req.on('close', () => {
     sseClients.delete(res);
+    sseClientsMap.delete(res);
+    broadcastSyncStats();
   });
 });
 

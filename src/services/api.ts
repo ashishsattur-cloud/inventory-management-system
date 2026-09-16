@@ -237,18 +237,68 @@ export async function apiSaveSupplier(supplier: Supplier): Promise<boolean> {
   }
 }
 
+export interface DeviceSyncStats {
+  connected: boolean;
+  clients: number;
+  totalDevices?: number;
+  connectedDevices?: number;
+  mobileGunsCount?: number;
+  laptopsCount?: number;
+  hasActiveMobileGun?: boolean;
+  hasActiveLaptop?: boolean;
+}
+
 export interface LiveSyncOptions {
+  role?: 'laptop' | 'mobile_gun';
   onCatalogUpdate: (data: { products: Product[]; suppliers: Supplier[]; sales: SaleTransaction[] }) => void;
   onStockDecremented: (data: { barcode: string; product: Product; oldStock: number; newStock: number; deviceName: string }) => void;
   onStockIncremented?: (data: { barcode: string; product: Product; oldStock: number; newStock: number; deviceName: string }) => void;
   onItemScannedForBill?: (data: { barcode: string; product: Product; quantity: number; deviceName: string; timestamp: string }) => void;
   onProductAdded?: (data: { product: Product; deviceName: string }) => void;
-  onBarcodeScanned?: (data: { barcode: string; product: Product | null; deviceName: string; timestamp: number; timeStr?: string }) => void;
+  onBarcodeScanned?: (data: { barcode: string; product: Product | null; deviceName: string; timestamp: number; timeStr?: string; mode?: string }) => void;
   onSaleCompleted?: (sale: SaleTransaction) => void;
   onSecurityApproved?: (data: { deviceId: string; token: string; record: any }) => void;
   onSecurityRejected?: (data: { deviceId: string; record: any }) => void;
   onSecurityRequestCreated?: (record: any) => void;
-  onStatusChange?: (status: { connected: boolean; clients: number }) => void;
+  onDeviceSyncUpdate?: (stats: DeviceSyncStats) => void;
+  onGunPing?: (data: { deviceName: string; timeStr: string; action?: string }) => void;
+  onStatusChange?: (status: DeviceSyncStats) => void;
+}
+
+export interface NetworkInfoResponse {
+  lanIps: string[];
+  port: number;
+  currentOrigin: string;
+  publicCloudUrl: string;
+  totalDevices: number;
+  connectedDevices: number;
+  mobileGunsCount: number;
+  laptopsCount: number;
+  hasActiveMobileGun: boolean;
+  hasActiveLaptop: boolean;
+}
+
+export async function apiGetNetworkInfo(): Promise<NetworkInfoResponse | null> {
+  try {
+    const res = await safeFetchJson<NetworkInfoResponse>('/api/network-info');
+    if (res.ok && res.data) {
+      return res.data;
+    }
+  } catch (e) {}
+  return null;
+}
+
+export async function apiPingGun(deviceName = 'Handheld Mobile Barcode Gun', action = 'heartbeat'): Promise<boolean> {
+  try {
+    const res = await safeFetchJson('/api/gun-ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceName, action }),
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 // --- SECURITY & DEVICE VERIFICATION API ---
@@ -458,16 +508,39 @@ export function subscribeToLiveSync(
       options.onSecurityRejected?.(payload);
     } else if (type === 'SECURITY_REQUEST_CREATED') {
       options.onSecurityRequestCreated?.(payload);
+    } else if (type === 'DEVICE_SYNC_UPDATE') {
+      options.onDeviceSyncUpdate?.(payload);
+      options.onStatusChange?.({
+        connected: true,
+        clients: payload.connectedDevices || 1,
+        ...payload,
+      });
+    } else if (type === 'MOBILE_GUN_PING') {
+      options.onGunPing?.(payload);
     }
   }
+
+  const role =
+    options.role ||
+    (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'scanner'
+      ? 'mobile_gun'
+      : 'laptop');
 
   // Backup poll for events to guarantee zero-dropped syncs
   async function pollRecentEvents() {
     if (isUnmounted) return;
     try {
-      const res = await fetch(`/api/scan-events?since=${lastEventTime - 5000}`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await safeFetchJson<{
+        events: any[];
+        connectedDevices?: number;
+        mobileGunsCount?: number;
+        laptopsCount?: number;
+        hasActiveMobileGun?: boolean;
+        hasActiveLaptop?: boolean;
+      }>(`/api/scan-events?since=${lastEventTime - 5000}&role=${role}`);
+
+      if (res.ok && res.data) {
+        const data = res.data;
         if (Array.isArray(data.events)) {
           for (const ev of data.events) {
             if (ev.timestamp > lastEventTime) {
@@ -479,13 +552,17 @@ export function subscribeToLiveSync(
         options.onStatusChange?.({
           connected: true,
           clients: Math.max(1, typeof data.connectedDevices === 'number' ? data.connectedDevices : 1),
+          totalDevices: data.connectedDevices,
+          mobileGunsCount: data.mobileGunsCount,
+          laptopsCount: data.laptopsCount,
+          hasActiveMobileGun: data.hasActiveMobileGun,
+          hasActiveLaptop: data.hasActiveLaptop,
         });
       } else {
         const healthy = await apiCheckServerHealth();
         options.onStatusChange?.({ connected: healthy, clients: healthy ? 1 : 0 });
       }
     } catch (e) {
-      // If poll fails, double check server health
       const healthy = await apiCheckServerHealth();
       options.onStatusChange?.({ connected: healthy, clients: healthy ? 1 : 0 });
     }
@@ -495,7 +572,7 @@ export function subscribeToLiveSync(
     if (isUnmounted) return;
 
     try {
-      eventSource = new EventSource('/api/stream');
+      eventSource = new EventSource(`/api/stream?role=${role}`);
 
       eventSource.onopen = () => {
         options.onStatusChange?.({ connected: true, clients: 1 });
@@ -507,13 +584,38 @@ export function subscribeToLiveSync(
           if (payload.store) {
             options.onCatalogUpdate(payload.store);
           }
+          options.onDeviceSyncUpdate?.(payload);
           options.onStatusChange?.({
             connected: true,
             clients: Math.max(1, typeof payload.connectedDevices === 'number' ? payload.connectedDevices : 1),
+            totalDevices: payload.totalDevices,
+            mobileGunsCount: payload.mobileGunsCount,
+            laptopsCount: payload.laptopsCount,
+            hasActiveMobileGun: payload.hasActiveMobileGun,
+            hasActiveLaptop: payload.hasActiveLaptop,
           });
         } catch (err) {
           console.error('Error parsing INIT SSE event:', err);
         }
+      });
+
+      eventSource.addEventListener('DEVICE_SYNC_UPDATE', (e: MessageEvent) => {
+        try {
+          const stats = JSON.parse(e.data);
+          options.onDeviceSyncUpdate?.(stats);
+          options.onStatusChange?.({
+            connected: true,
+            clients: stats.connectedDevices || 1,
+            ...stats,
+          });
+        } catch (err) {}
+      });
+
+      eventSource.addEventListener('MOBILE_GUN_PING', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          options.onGunPing?.(payload);
+        } catch (err) {}
       });
 
       eventSource.addEventListener('CATALOG_UPDATED', (e: MessageEvent) => {

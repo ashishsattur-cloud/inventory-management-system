@@ -43,6 +43,7 @@ import {
   playChime,
   apiGetCurrentUser,
   apiLogout,
+  DeviceSyncStats,
   getStoredAuthToken,
   getStoredUser
 } from './services/api';
@@ -106,9 +107,13 @@ export default function App() {
   }, [posCart]);
 
   // Live Sync Status with Server & Connected Devices
-  const [syncStatus, setSyncStatus] = useState<{ connected: boolean; clients: number }>({
+  const [syncStatus, setSyncStatus] = useState<DeviceSyncStats>({
     connected: false,
     clients: 1,
+    mobileGunsCount: 0,
+    laptopsCount: 1,
+    hasActiveMobileGun: false,
+    hasActiveLaptop: true,
   });
 
   // Modals state
@@ -221,7 +226,14 @@ export default function App() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('mode') === 'scanner') return true;
-        return false;
+        const userExited = safeSessionStorage.getItem('user_exited_mobile_scanner');
+        if (userExited === 'true') return false;
+        // Auto-detect mobile devices so opening on phone directly launches mobile gun mode
+        const isMobileUA = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const isSmallScreen = window.innerWidth <= 640;
+        if (isMobileUA && isSmallScreen) {
+          return true;
+        }
       } catch (e) {
         return false;
       }
@@ -277,6 +289,7 @@ export default function App() {
 
     // Subscribe to SSE real-time stream for instant cross-device updates (Laptop <-> Mobile)
     const unsubscribe = subscribeToLiveSync({
+      role: 'laptop',
       onCatalogUpdate: (data) => {
         if (!mounted) return;
         setProducts(Array.isArray(data.products) ? data.products.map(normalizeProduct) : []);
@@ -350,6 +363,19 @@ export default function App() {
       onStatusChange: (status) => {
         if (!mounted) return;
         setSyncStatus(status);
+      },
+      onDeviceSyncUpdate: (stats) => {
+        if (!mounted) return;
+        setSyncStatus(stats);
+      },
+      onGunPing: (data) => {
+        if (!mounted) return;
+        playChime('chime');
+        setScanNotification({
+          message: `📡 [Sync Ping] ${data.deviceName || 'Mobile Barcode Gun'} connected and active (${data.timeStr || 'Now'})`,
+          type: 'info',
+        });
+        setTimeout(() => setScanNotification(null), 4000);
       },
       onSecurityApproved: (data) => {
         if (!mounted) return;
@@ -740,11 +766,23 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => setIsHardwareModalOpen(true)}
-                      className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded-full transition-colors"
+                      className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full transition-colors ${
+                        syncStatus.hasActiveMobileGun || (syncStatus.mobileGunsCount && syncStatus.mobileGunsCount > 0)
+                          ? 'text-emerald-900 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300'
+                          : 'text-blue-900 bg-blue-100 hover:bg-blue-200 border border-blue-200'
+                      }`}
                       title="Real-time multi-device sync active across Wi-Fi"
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <span>Synced ({syncStatus.clients} device{syncStatus.clients === 1 ? '' : 's'})</span>
+                      <span className={`w-2 h-2 rounded-full ${
+                        syncStatus.hasActiveMobileGun || (syncStatus.mobileGunsCount && syncStatus.mobileGunsCount > 0)
+                          ? 'bg-emerald-500 animate-pulse'
+                          : 'bg-blue-500'
+                      }`}></span>
+                      <span>
+                        {syncStatus.hasActiveMobileGun || (syncStatus.mobileGunsCount && syncStatus.mobileGunsCount > 0)
+                          ? `🔫 Mobile Gun Synced (${syncStatus.mobileGunsCount || 1})`
+                          : '📲 Pair Mobile Gun (QR)'}
+                      </span>
                     </button>
                   ) : (
                     <button
@@ -753,7 +791,7 @@ export default function App() {
                       className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full transition-colors"
                     >
                       <Radio className="w-2.5 h-2.5 text-slate-500" />
-                      <span>Local Mode</span>
+                      <span>Pair Mobile Gun</span>
                     </button>
                   )}
                 </h1>
@@ -1072,6 +1110,7 @@ export default function App() {
         onRemoteScan={handleBarcodeDetected}
         onDeductStock={handleDeductStock}
         connectedDevices={syncStatus.clients}
+        mobileGunsCount={syncStatus.mobileGunsCount}
       />
 
       {/* Direct Add Product Modal */}
