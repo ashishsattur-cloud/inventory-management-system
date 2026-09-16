@@ -48,10 +48,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleQuickFill = (userVal: string, passVal: string) => {
+  const handleQuickFill = async (userVal: string, passVal: string, autoSubmit = true) => {
     setUsername(userVal);
     setPassword(passVal);
     setErrorMessage(null);
+
+    if (autoSubmit) {
+      setIsLoading(true);
+      try {
+        const result = await apiLogin(userVal, passVal);
+        if (result.success && result.user && result.token) {
+          setSuccessMessage(`Welcome back, ${result.user.name}! Redirecting...`);
+          setTimeout(() => {
+            onLoginSuccess(result.user!, result.token!);
+          }, 300);
+        } else {
+          setErrorMessage(result.error || 'Authentication failed. Please verify credentials.');
+        }
+      } catch (err: any) {
+        setErrorMessage(err.message || 'Connection error. Please retry.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
   };
 
   return (
